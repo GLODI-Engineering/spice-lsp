@@ -7,6 +7,9 @@ recognized/resolved, not how to implement it in any particular runtime.
 Sources:
 - ngspice 46 User's Manual (`ngspice-46-manual.md`, ~28k lines)
 - Xyce 7.10 Reference Guide (`Xyce_RG.md`, ~29.8k lines)
+- Xyce 7.10 Users' Guide (`Xyce_UG.pdf`, converted locally with `pdftotext`) —
+  used specifically to close gaps the Reference Guide left open (title-line
+  rule, numeric scale-factor table, node-name hierarchy separator, `.MPDE`)
 - LTspice — **not yet available**, see [§7](#7-ltspice--tbd)
 
 Every statement below is tagged:
@@ -54,7 +57,7 @@ the user pin a mode in settings, or default to strict/native mode).
 | Line continuation | 🟢 `+` as first non-blank char of next line (or Unix `\\` at line end) continues previous line | same — 🟢 |
 | Continuation exceptions | 🔵 `.title`, `.lib`, `.include` do **not** support continuation | not documented as restricted |
 | Case sensitivity | 🟢 keywords/node names case-insensitive in batch mode | 🟢 same (examples freely mix case) |
-| Title line | 🔵 first physical line of the file is *always* the title (even if it looks like a statement); `.title <text>` can override | not explicitly documented as mandatory in the Xyce RG — **verify against Xyce Users' Guide before relying on this** |
+| Title line | 🟢 first physical line of the file is *always* the title (treated as a comment even without `*`), even if it looks like a statement; `.title <text>` can override in ngspice | 🟢 **confirmed via Xyce Users' Guide §4.1.3.1**: "The first line of the netlist is the title line... treated as a comment even if it does not begin with an asterisk... forgetting this is a common mistake and will probably result in a parsing error." Same rule as ngspice. |
 | `.END`/`.end` | 🟢 mandatory, must be the last line | 🟢 "marks end of netlist file" — same role |
 | Ground node | 🟢 must be `0`; `gnd` auto-converted to `0` in ngspice (disable via `set no_auto_gnd`) | 🟢 `0` reserved as ground |
 | Illegal node-name chars | 🔵 `= % ( ) , [ ] < > ~` reserved (XSPICE port-syntax collision) | 🟠 any printable ASCII except whitespace/`( ) { } , : ; " '`; extra rule: arithmetic-operator chars (`% ^ & ? : ~ * - + < > / \|`) and leading `#` are unsafe *inside expressions* specifically |
@@ -71,9 +74,10 @@ per dialect, not inside the main grammar.
 
 ## 2. Numbers & Units
 
-🟡 **DIVERGENT in documentation completeness, likely COMMON in practice.**
+🟡 **DIVERGENT in one specific way (see `X` below), otherwise COMMON —
+confirmed against both simulators' own scale-factor tables.**
 
-ngspice's manual gives an explicit, authoritative suffix table:
+ngspice's manual (§2.1.3.3) suffix table:
 
 | Suffix | Factor |
 |---|---|
@@ -89,17 +93,39 @@ ngspice's manual gives an explicit, authoritative suffix table:
 | `f` | 1e-15 |
 | `a` | 1e-18 |
 
-Key disambiguation rule (🟢 COMMON, this is the classic SPICE convention both
-simulators follow): **`m`/`M` is always milli** (1e-3); mega must be spelled
-`Meg`/`MEG`. Trailing alphabetic characters after a number or after a valid
-suffix are decorative and ignored: `10`, `10V`, `10Hz`, and `10Volts` are the
-same value; `1000 == 1k == 1.0e3 == 1kHz`.
+Xyce Users' Guide Table 4-1 (confirmed by direct PDF read — the Reference
+Guide alone doesn't state this table, but the Users' Guide does):
 
-Xyce's Reference Guide does **not** contain an equivalent explicit table —
-suffix usage is only inferable from examples (`1MEG`, `100u`, `4.540pF`,
-`1.0mV`, `2ns`), which are consistent with the same table above. Treat the
-ngspice table as authoritative for both until cross-checked against the Xyce
-Users' Guide.
+| Symbol | Equivalent value |
+|---|---|
+| `T` | 1e12 |
+| `G` | 1e9 |
+| `Meg` | 1e6 |
+| `X` | 1e6 |
+| `K` | 1e3 |
+| `mil` | 25.4e-6 |
+| `m` | 1e-3 |
+| `u` (µ) | 1e-6 |
+| `n` | 1e-9 |
+| `p` | 1e-12 |
+| `f` | 1e-15 |
+
+🟢 **Confirmed common**: the two tables agree on every suffix ngspice
+documents except `a` (atto, not in Xyce's table — matches the earlier
+finding that Xyce needs `-hspice-ext units` to interpret `a` as atto at
+all; by default `a` is not a recognized scale suffix in Xyce).
+
+🟡 **One real divergence**: **Xyce accepts `X` as an alias for `Meg` (1e6)**,
+per its own Users' Guide table — this suffix does not exist in ngspice's
+table at all. A netlist using `1X` for `1e6` parses fine in Xyce and would
+be a syntax error (or an unrecognized-suffix warning, decorative-letter
+fallback) in ngspice. Worth a dialect-aware completion/validation rule.
+
+Key disambiguation rule (🟢 COMMON, classic SPICE convention, confirmed in
+both): **`m`/`M` is always milli** (1e-3); mega must be spelled `Meg`/`MEG`
+(or `X` in Xyce). Trailing alphabetic characters after a number or after a
+valid suffix are decorative and ignored: `10`, `10V`, `10Hz`, and `10Volts`
+are the same value; `1000 == 1k == 1.0e3 == 1kHz`.
 
 - 🟠 **Xyce-specific:** complex numbers via `J` suffix — `.param a0=1.0+2.0J`.
 - 🔵 **ngspice-specific:** RKM notation (`2K7`, `4R7`) accepted only under
@@ -431,18 +457,35 @@ is supported to arbitrary/bounded depth.
 
 🟡 **DIVERGENT:**
 - 🟠 Xyce explicitly forbids a subcircuit calling itself, directly or
-  transitively (circular reference is a documented error). ngspice's
-  extraction didn't surface an explicit circularity check — treat as
-  "presumably also illegal, but confirm."
-- 🟠 Xyce's `PARAMS:` keyword is shown in the canonical form; ngspice's
-  examples use bare `ident=value` after the node list without a literal
-  `PARAMS:` token — **verify** whether ngspice accepts `PARAMS:` too (likely
-  yes, for cross-compatibility) or whether it's purely a Xyce/HSPICE-ism.
-- 🟠 Xyce: name-mangling on flatten is documented explicitly —
-  `Q17` inside `X3` becomes `X3:Q17`, colon-separated; global nodes are the
-  one exception (not renamed). ngspice likely does the same (`.` or `:`
-  hierarchy separator conventions are universal in SPICE tooling) but this
-  wasn't explicitly quoted from its manual — flag for confirmation.
+  transitively (circular reference is a documented error). ngspice's manual
+  doesn't state an explicit circularity check as a named rule — but it does
+  state that subcircuit instantiation is implemented as **pure textual
+  substitution** ("each subcircuit instance is replaced by its definition
+  using text expansion... the hierarchy is not present after input
+  processing," §2.6): a circular reference would make that substitution
+  never terminate, so it's illegal *by construction* even without a named
+  "no circular references" rule — expect an expansion-depth/hang failure
+  mode rather than a clean diagnostic message. An LSP should still detect
+  and flag circular subckt references explicitly rather than relying on
+  ngspice's own (non-existent) error message for it.
+- 🟢 **Confirmed — `PARAMS:` is Xyce/HSPICE-specific, not ngspice syntax.**
+  Grepped the full ngspice-46 manual for the literal token `PARAMS:`: zero
+  occurrences. ngspice's own §2.11.3 examples use bare `ident=value` after
+  the node list with **no** `PARAMS:` keyword at all — it is not an accepted
+  alias, just absent from the grammar. Xyce's `PARAMS:` is a keyword some
+  other SPICE dialects (HSPICE, PSpice) require but Xyce treats as
+  optional. **Do not accept a `PARAMS:` token in an ngspice-mode parser.**
+- 🟡 **Confirmed divergent — name-mangling separator differs.** Xyce's
+  default hierarchy separator is `:` (`X3:Q17`, `V(Xmain:Xnot1:A)`),
+  changeable to `.` via the `-hspice-ext separator` command-line flag.
+  ngspice's manual (§13, "Node voltages and branch currents from within a
+  subcircuit," and its `save`/`alterparam` examples) confirms ngspice uses
+  **`.` (dot) as its hierarchy separator**, not `:` — e.g.
+  `save x1.x1.x1.7 v(9)`, extended node names like `xsub1.int1` or
+  `xsub1.xsub2.int2`. So by default the two dialects use **different**
+  separator characters for the exact same concept — a hard-coded `:` or `.`
+  assumption anywhere in symbol resolution / go-to-definition logic must be
+  dialect-parameterized, not shared.
 
 ### 6.2 `.MODEL`
 
@@ -557,6 +600,18 @@ unsupported `.MC`/`.WCASE` — no ngspice equivalent found), `.DATA ... .ENDDATA
 directives: `REPLACEGROUND`/`REMOVEUNUSED`/`ADDRESISTORS`), `.FFT` (distinct
 from `.FOUR`, its own window-function options).
 
+**`.MPDE` — resolved, do not implement.** Checked directly: grepped the full
+Xyce 7.10 Reference Guide, the full Xyce 7.10 Users' Guide (converted from
+PDF), and the 7.10 Release Notes — zero occurrences of "MPDE" in any of
+them. A web search confirms Multi-Time PDE analysis is a real Xyce/Sandia
+research capability (cited in Sandia OSTI publications alongside HB, MOR,
+and UQ as "active areas of research... capabilities are improving with each
+release"), but it has **no documented, stable public netlist statement** in
+the 7.10 release's own reference material. Conclusion: `.MPDE` is not part
+of the public Xyce 7.10 netlist grammar — don't add it to the device/analysis
+tables or offer it in completions; revisit only if a later Xyce version's
+docs document a concrete `.MPDE` syntax.
+
 🟡 **`.SENS` diverges sharply:** ngspice's `.SENS outvar [filters] [DC|AC ...]`
 computes DC/AC sensitivity of one output to swept circuit elements pretty
 broadly. Xyce's `.SENS objfunc=<expr> param=<param-list> [objvars=][acobjfunc=]`
@@ -622,11 +677,15 @@ possible).
    per-file or per-workspace dialect setting (e.g. a magic comment or
    extension-level config), with heuristic dialect *suggestion* as a
    fallback/lint, not silent assumption.
-2. **Model the grammar as: core (🟢) + per-dialect device/statement tables +
-   per-dialect expression-function tables**, not as two independent
-   grammars. The 🟢/🔵/🟠/🟡 tagging in this document is meant to map
-   directly onto that architecture — a `commonGrammar` module plus
-   `ngspiceExtensions`/`xyceExtensions` overlay modules.
+2. **Decision (adopted):** model the grammar as: core (🟢) + per-dialect
+   device/statement tables + per-dialect expression-function tables — not as
+   two independent grammars, and not as one grammar with if/else dialect
+   checks scattered through it. The 🟢/🔵/🟠/🟡 tagging in this document is
+   meant to map directly onto that architecture — a `commonGrammar` module
+   plus `ngspiceExtensions`/`xyceExtensions` (and later `ltspiceExtensions`)
+   overlay modules, each overlay supplying its own device table, operator
+   table, and function table on top of the shared core. This is the
+   structure the implementation (§ language discussion, TBD) should follow.
 3. **Expression parsing needs a context tag**, at minimum: `{compile-time |
    behavioral/runtime | print/measure}` for ngspice's 3-4-way split, and
    `{param-context | print-context | device-param-context}` for Xyce's
@@ -640,16 +699,28 @@ possible).
    (+ `-hspice-ext math` flag if modeled), device letter meaning depends on
    declared dialect (`P`, `U`), `.options` flat-vs-packaged shape mismatch
    when "porting" a snippet between dialects.
-5. **Several manual gaps were flagged during extraction and should be
-   verified against primary sources (Users' Guides, not just Reference
-   Guides) before being treated as authoritative:** Xyce's numeric-suffix
-   table (inferred from examples only), Xyce's title-line requirement,
-   whether ngspice's `PARAMS:` keyword is accepted as an alias, whether
-   ngspice subckt name-mangling matches Xyce's `X3:Q17` convention,
-   whether ngspice forbids circular subcircuit references as explicitly as
-   Xyce does. `.MPDE` (searched for explicitly in the Xyce 7.10 Reference
-   Guide) does **not** appear in that document at all — do not assume it's
-   part of the netlist grammar without checking elsewhere.
+5. **Gaps flagged during the initial extraction have since been resolved
+   against primary sources** (Xyce Users' Guide, read directly via
+   `pdftotext`, plus a web check for `.MPDE`):
+   - Xyce's numeric-suffix table: confirmed (Users' Guide Table 4-1) —
+     matches ngspice's table except Xyce adds `X` as a `Meg` alias and
+     lacks `a` (atto) by default (§2).
+   - Xyce's title-line requirement: confirmed mandatory, identical rule to
+     ngspice (§1).
+   - ngspice's `PARAMS:` keyword: confirmed **absent** — zero occurrences in
+     the full manual; ngspice uses bare `ident=value`, do not accept
+     `PARAMS:` in an ngspice-mode parser (§6.1).
+   - Subcircuit name-mangling separator: confirmed **divergent** —
+     ngspice uses `.` (dot), Xyce uses `:` (colon) by default (§6.1).
+   - Circular subcircuit references: ngspice has no named "circular
+     reference" error, but its purely-textual subckt expansion mechanism
+     makes a cycle non-terminating by construction — treat as illegal,
+     expect a hang/depth-limit failure rather than a clean diagnostic if
+     unhandled (§6.1).
+   - `.MPDE`: confirmed **not part of the public Xyce 7.10 netlist grammar**
+     — absent from the Reference Guide, Users' Guide, and Release Notes;
+     it's a real but research-grade/internal Sandia capability with no
+     documented stable netlist syntax in this release (§7).
 
 ---
 
@@ -670,7 +741,7 @@ possible).
 | B/E/G behavioral sources | 🟡 | shared concept and shape; table/interpolation and LAPLACE/FREQ support diverge |
 | `.control` scripting | 🔵 | ngspice-only mechanism entirely; Xyce has no equivalent block |
 | `.STEP` | 🟠 | native in Xyce; emulated via `.control` loop in ngspice |
-| `.HB`/`.MPDE`/UQ analyses | 🟠 | Xyce/Sandia-specific (MPDE unconfirmed even for Xyce) |
+| `.HB`/UQ analyses | 🟠 | Xyce/Sandia-specific. (`.MPDE` checked and confirmed **not** part of the public 7.10 netlist grammar — omit it.) |
 | XSPICE code models | 🔵 | ngspice-only entirely |
 | `.OPTIONS` shape | 🟡 | flat namespace (ngspice) vs. packaged namespaces (Xyce) |
 | `.INCLUDE`/`.LIB` | 🟡 | include shared; `.lib` section semantics differ, Xyce targets HSPICE compat |
