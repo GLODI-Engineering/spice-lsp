@@ -1,3 +1,4 @@
+use super::NodeParamsResult;
 use super::{ParseError, ParseResult};
 use crate::ast::*;
 use crate::dialect::{DeviceKind, Dialect};
@@ -70,11 +71,11 @@ fn parse_element(line: &str, span: LineSpan) -> ParseResult {
 
     let kind = Dialect::Ngspice.resolve_device_letter(device_letter);
 
-    let (nodes, raw_params) = match kind {
+    let (nodes, raw_params, subckt_name) = match kind {
         Some(k) => split_nodes_params(&tokens[1..], k, &span)?,
         None => {
             let params: Vec<String> = tokens[1..].iter().map(|s| s.to_string()).collect();
-            (vec![], params)
+            (vec![], params, None)
         }
     };
 
@@ -83,15 +84,12 @@ fn parse_element(line: &str, span: LineSpan) -> ParseResult {
         name,
         nodes,
         raw_params,
+        subckt_name,
         span,
     }))
 }
 
-fn split_nodes_params(
-    tokens: &[&str],
-    kind: DeviceKind,
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_nodes_params(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> NodeParamsResult {
     let min = kind.min_nodes();
 
     match kind {
@@ -109,7 +107,7 @@ fn split_nodes_params(
             }
             let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
-            Ok((nodes, params))
+            Ok((nodes, params, None))
         }
         _ => {
             if tokens.len() < min {
@@ -123,15 +121,12 @@ fn split_nodes_params(
             }
             let nodes: Vec<String> = tokens[..min].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[min..].iter().map(|s| s.to_string()).collect();
-            Ok((nodes, params))
+            Ok((nodes, params, None))
         }
     }
 }
 
-fn split_subcircuit_nodes_params(
-    tokens: &[&str],
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_subcircuit_nodes_params(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
     let param_start = tokens.iter().position(|t| t.contains('='));
     let subckt_name_idx = match param_start {
         Some(p) if p > 0 => p.saturating_sub(1),
@@ -147,6 +142,11 @@ fn split_subcircuit_nodes_params(
         });
     }
 
+    let subckt_name = match tokens.get(subckt_name_idx) {
+        Some(&s) if !s.contains('=') => Some(s.to_string()),
+        _ => None,
+    };
+
     let nodes: Vec<String> = tokens[..subckt_name_idx]
         .iter()
         .map(|s| s.to_string())
@@ -155,13 +155,10 @@ fn split_subcircuit_nodes_params(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    Ok((nodes, params))
+    Ok((nodes, params, subckt_name))
 }
 
-fn split_mutual_inductor(
-    tokens: &[&str],
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_mutual_inductor(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
     if tokens.len() < 2 {
         return Err(ParseError {
             message: format!(
@@ -174,7 +171,7 @@ fn split_mutual_inductor(
     let last = tokens.len() - 1;
     let inductors: Vec<String> = tokens[..last].iter().map(|s| s.to_string()).collect();
     let params: Vec<String> = vec![tokens[last].to_string()];
-    Ok((inductors, params))
+    Ok((inductors, params, None))
 }
 
 fn parse_subckt(line: &str, span: LineSpan) -> ParseResult {
@@ -408,6 +405,7 @@ mod tests {
                 name: "R1".into(),
                 nodes: vec!["1".into(), "2".into()],
                 raw_params: vec!["100".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -423,6 +421,7 @@ mod tests {
                 name: "C1".into(),
                 nodes: vec!["3".into(), "0".into()],
                 raw_params: vec!["1u".into(), "ic=2".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -438,6 +437,7 @@ mod tests {
                 name: "L1".into(),
                 nodes: vec!["5".into(), "6".into()],
                 raw_params: vec!["10m".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -453,6 +453,7 @@ mod tests {
                 name: "V1".into(),
                 nodes: vec!["1".into(), "0".into()],
                 raw_params: vec!["DC".into(), "5".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -468,6 +469,7 @@ mod tests {
                 name: "I1".into(),
                 nodes: vec!["2".into(), "0".into()],
                 raw_params: vec!["AC".into(), "1m".into(), "0".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -483,6 +485,7 @@ mod tests {
                 name: "D1".into(),
                 nodes: vec!["1".into(), "2".into()],
                 raw_params: vec!["1N4148".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -498,6 +501,7 @@ mod tests {
                 name: "Q1".into(),
                 nodes: vec!["c".into(), "b".into(), "e".into()],
                 raw_params: vec!["2N3904".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -513,6 +517,7 @@ mod tests {
                 name: "J1".into(),
                 nodes: vec!["d".into(), "g".into(), "s".into()],
                 raw_params: vec!["2N3819".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -528,6 +533,7 @@ mod tests {
                 name: "M1".into(),
                 nodes: vec!["d".into(), "g".into(), "s".into(), "b".into()],
                 raw_params: vec!["NMOS".into(), "L=1u".into(), "W=10u".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -543,6 +549,7 @@ mod tests {
                 name: "X1".into(),
                 nodes: vec!["1".into(), "2".into(), "3".into()],
                 raw_params: vec!["gain=10".into()],
+                subckt_name: Some("opamp".into()),
                 span: 1..2,
             })
         );
@@ -558,6 +565,7 @@ mod tests {
                 name: "X1".into(),
                 nodes: vec!["1".into(), "2".into()],
                 raw_params: vec![],
+                subckt_name: Some("opamp".into()),
                 span: 1..2,
             })
         );
@@ -573,6 +581,7 @@ mod tests {
                 name: "A1".into(),
                 nodes: vec!["%vd".into()],
                 raw_params: vec!["[1".into(), "2]".into(), "adc_bridge".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -588,6 +597,7 @@ mod tests {
                 name: "U1".into(),
                 nodes: vec!["1".into(), "2".into(), "3".into()],
                 raw_params: vec!["urc_model".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -631,6 +641,7 @@ mod tests {
                 name: "E1".into(),
                 nodes: vec!["5".into(), "0".into(), "1".into(), "0".into()],
                 raw_params: vec!["10".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -646,6 +657,7 @@ mod tests {
                 name: "G1".into(),
                 nodes: vec!["3".into(), "0".into(), "1".into(), "2".into()],
                 raw_params: vec!["0.1".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -661,6 +673,7 @@ mod tests {
                 name: "F1".into(),
                 nodes: vec!["1".into(), "2".into()],
                 raw_params: vec!["Vmeas".into(), "100".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -676,6 +689,7 @@ mod tests {
                 name: "H1".into(),
                 nodes: vec!["3".into(), "4".into()],
                 raw_params: vec!["Vsense".into(), "50".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -691,6 +705,7 @@ mod tests {
                 name: "B1".into(),
                 nodes: vec!["out".into(), "0".into()],
                 raw_params: vec!["V=V(in)*2".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -706,6 +721,7 @@ mod tests {
                 name: "S1".into(),
                 nodes: vec!["1".into(), "2".into(), "3".into(), "0".into()],
                 raw_params: vec!["smodel".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -721,6 +737,7 @@ mod tests {
                 name: "W1".into(),
                 nodes: vec!["1".into(), "2".into()],
                 raw_params: vec!["Vctrl".into(), "wmodel".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -736,6 +753,7 @@ mod tests {
                 name: "T1".into(),
                 nodes: vec!["1".into(), "0".into(), "2".into(), "0".into()],
                 raw_params: vec!["Z0=50".into(), "TD=1n".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );
@@ -751,6 +769,7 @@ mod tests {
                 name: "K1".into(),
                 nodes: vec!["L1".into(), "L2".into()],
                 raw_params: vec!["0.99".into()],
+                subckt_name: None,
                 span: 1..2,
             })
         );

@@ -1,3 +1,4 @@
+use super::NodeParamsResult;
 use super::{ParseError, ParseResult};
 use crate::ast::*;
 use crate::dialect::{DeviceKind, Dialect};
@@ -92,12 +93,15 @@ fn parse_element(line: &str, span: LineSpan) -> ParseResult {
         Dialect::Xyce.resolve_device_letter(device_letter)
     };
 
-    let (nodes, raw_params) = match kind {
-        Some(DeviceKind::Bjt) => split_bjt_nodes_params_xyce(&tokens[1..], &span)?,
+    let (nodes, raw_params, subckt_name) = match kind {
+        Some(DeviceKind::Bjt) => {
+            let (n, p, _) = split_bjt_nodes_params_xyce(&tokens[1..], &span)?;
+            (n, p, None)
+        }
         Some(k) => split_nodes_params_xyce(&tokens[1..], k, &span)?,
         None => {
             let params: Vec<String> = tokens[1..].iter().map(|s| s.to_string()).collect();
-            (vec![], params)
+            (vec![], params, None)
         }
     };
 
@@ -106,6 +110,7 @@ fn parse_element(line: &str, span: LineSpan) -> ParseResult {
         name,
         nodes,
         raw_params,
+        subckt_name,
         span,
     }))
 }
@@ -129,11 +134,7 @@ fn resolve_y_type(name: &str) -> Option<DeviceKind> {
     }
 }
 
-fn split_nodes_params_xyce(
-    tokens: &[&str],
-    kind: DeviceKind,
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_nodes_params_xyce(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> NodeParamsResult {
     let min = kind.min_nodes();
 
     match kind {
@@ -151,7 +152,7 @@ fn split_nodes_params_xyce(
             }
             let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
-            Ok((nodes, params))
+            Ok((nodes, params, None))
         }
         _ => {
             if tokens.len() < min {
@@ -165,15 +166,12 @@ fn split_nodes_params_xyce(
             }
             let nodes: Vec<String> = tokens[..min].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[min..].iter().map(|s| s.to_string()).collect();
-            Ok((nodes, params))
+            Ok((nodes, params, None))
         }
     }
 }
 
-fn split_bjt_nodes_params_xyce(
-    tokens: &[&str],
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_bjt_nodes_params_xyce(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
     if tokens.len() < 3 {
         return Err(ParseError {
             message: format!(
@@ -199,13 +197,10 @@ fn split_bjt_nodes_params_xyce(
     }
 
     let params: Vec<String> = remaining.iter().map(|s| s.to_string()).collect();
-    Ok((nodes, params))
+    Ok((nodes, params, None))
 }
 
-fn split_subcircuit_nodes_params(
-    tokens: &[&str],
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_subcircuit_nodes_params(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
     let param_start = tokens.iter().position(|t| t.contains('='));
     let subckt_name_idx = match param_start {
         Some(p) if p > 0 => p.saturating_sub(1),
@@ -221,6 +216,11 @@ fn split_subcircuit_nodes_params(
         });
     }
 
+    let subckt_name = match tokens.get(subckt_name_idx) {
+        Some(&s) if !s.contains('=') => Some(s.to_string()),
+        _ => None,
+    };
+
     let nodes: Vec<String> = tokens[..subckt_name_idx]
         .iter()
         .map(|s| s.to_string())
@@ -229,13 +229,10 @@ fn split_subcircuit_nodes_params(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    Ok((nodes, params))
+    Ok((nodes, params, subckt_name))
 }
 
-fn split_mutual_inductor(
-    tokens: &[&str],
-    span: &LineSpan,
-) -> Result<(Vec<String>, Vec<String>), ParseError> {
+fn split_mutual_inductor(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
     if tokens.len() < 2 {
         return Err(ParseError {
             message: "mutual inductor K requires at least 2 inductor names + coupling".into(),
@@ -245,7 +242,7 @@ fn split_mutual_inductor(
     let last = tokens.len() - 1;
     let inductors: Vec<String> = tokens[..last].iter().map(|s| s.to_string()).collect();
     let params: Vec<String> = vec![tokens[last].to_string()];
-    Ok((inductors, params))
+    Ok((inductors, params, None))
 }
 
 fn parse_subckt(line: &str, span: LineSpan) -> ParseResult {
