@@ -783,15 +783,31 @@ epics:
   - id: CORE-15
     title: Global .subckt/.model name-uniqueness diagnostic
     area: symbols-uniqueness
-    status: complete
-    review: >
-      Retested 2026-07-31. servers/core/src/symbols/uniqueness.rs tests
-      pass. Duplicate .subckt/.model names flagged; cross-kind (subckt vs
-      model) collision on the shared global namespace flagged; case-
-      insensitive duplicate detection confirmed; model-binning suffix
-      (basename.N) correctly exempted from the duplicate check. Gate:
-      cargo fmt clean, cargo clippy -D warnings clean, 278/278 cargo test
-      pass.
+    status: blocked
+    blocked: >
+      2026-07-31. Discovered while fixing CORE-25 (unrelated task):
+      check_unique_names()'s `Statement::Subckt` branch in
+      servers/core/src/symbols/uniqueness.rs can never fire against the
+      REAL build_scope_tree() pipeline. build_scope_tree() (scope.rs)
+      consumes every `Statement::Subckt` into the Scope *tree structure*
+      itself (it becomes a child Scope's `kind`/`name`, pushed via
+      `stack.push(child)`) — the raw `Statement::Subckt` value is never
+      left behind in any scope's `.statements` list for
+      check_unique_names() to iterate over. So in real usage, two
+      identically-named `.subckt`s produce zero duplicate diagnostics.
+      This was masked because CORE-15's own test
+      (test_duplicate_subckt_names_flagged) builds its fixture via a
+      `scope_from_stmts(stmts)` helper that places raw `Statement::Subckt`
+      values directly into `.statements`, bypassing build_scope_tree()
+      entirely — a fixture shape that doesn't match what the real parser
+      pipeline ever produces. `.model` duplicate detection is NOT affected
+      (Model statements aren't consumed into the tree structure the way
+      Subckt is, confirmed via a new end-to-end test in
+      symbols::scope::tests::test_duplicate_name_across_two_files_caught_with_both_file_locations).
+      Fix needs: check_unique_names() must also walk `scope.children` and
+      check each child Scope's own `.name`/`.kind == Subckt` against the
+      same `seen` set, not just `scope.statements`. Out of scope for the
+      CORE-25 fix-blocked pass that found it — narrow, separate fix.
     depends_on: [CORE-14]
     summary: >
       Implement the docs/GRAMMAR.md §6.1 rule "All subcircuit and model
@@ -1289,28 +1305,27 @@ epics:
   - id: CORE-25
     title: Wire multi-file statements into symbol resolution
     area: multifile-symbol-integration
-    status: blocked
-    blocked: >
-      2026-07-31. build_scope_tree_from_tagged() in
-      servers/core/src/symbols/scope.rs (line ~92) accepts
-      `&[(FileId, Statement)]` but immediately does
-      `.map(|(_, s)| s.clone())` — discarding every FileId before calling
-      the single-file build_scope_tree(). Confirmed via a real test:
-      test_subckt_defined_in_included_file_resolves_from_includer PASSES
-      (cross-file .subckt resolution genuinely works, since by the time
-      it's merged it behaves like one big file), but
-      test_duplicate_name_across_two_files_caught_with_both_file_locations
-      (added, marked #[ignore] with this note) FAILS — there is no FileId
-      anywhere in Statement, ScopeError, or the uniqueness/subckt/model
-      diagnostic types, so no diagnostic can report which file an offending
-      statement came from. The epic's core promise ("diagnostics carry
-      file identity") is unmet. Fix needs: either (a) thread FileId through
-      Statement (a real AST shape change touching CORE-02/05/07's output),
-      or (b) keep a side-table mapping LineSpan-plus-statement-identity
-      back to FileId and have each symbols::* diagnostic type look it up.
-      Option (b) avoids re-touching the already-complete CORE-02/05/07
-      contracts but needs a stable way to correlate a Statement back to its
-      origin after cloning — worth deciding deliberately, not just patching.
+    status: review
+    review: >
+      Fixed 2026-07-31. Went with option (b) from the blocked note (a
+      side-mapping), realized as disjoint virtual-line-number blocks
+      rather than a literal side-table: SourceMap::assign_offset(file,
+      line_count) reserves a block per file, include::graph::
+      remap_statement_span() shifts every statement's span into that
+      shared space before merging, SourceMap::resolve_virtual_line()
+      recovers (FileId, real line) from any span. Statement/Scope/Param/
+      Model/etc are completely unchanged — zero impact on CORE-01..20's
+      already-complete code or tests. Also fixed a second, related bug
+      found in the process: .lib section statements were being attributed
+      to the including file's FileId instead of the library file's own.
+      The regression test was rewritten to use .model duplicates instead
+      of .subckt duplicates after discovering CORE-15 has its own,
+      separate pipeline-integration bug (see CORE-15's new blocked note) —
+      not fixed here, out of this epic's scope.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
+      test pass (0 ignored). Previously blocked: FileId was discarded
+      before build_scope_tree(), so no diagnostic could report which file
+      it came from.
     depends_on: [CORE-24, CORE-20]
     summary: >
       Retrofit CORE-14's scope-tree builder (and by extension CORE-15
@@ -1400,27 +1415,20 @@ epics:
   - id: CORE-27
     title: Wire runtime expression parsing onto B/E/G-source and behavioral R/L/C text
     area: expr-wiring-runtime
-    status: blocked
-    blocked: >
-      2026-07-31. wire_runtime_in_scope() in
-      servers/core/src/expr/wiring_runtime.rs only strips
-      V=/I= (B/E/G/F/H letters) and R=/C=/L=/Q= (R/C/L letters) prefixes
-      off raw_params entries. It has no handling at all for the
-      `TABLE {expr} = (...)` or `POLY(N) ...` forms on E/F/G/H sources —
-      confirmed with a probe test (now a permanent #[ignore]d regression,
-      test_e_source_table_form_produces_wired_expression): an
-      `ET2 2 0 TABLE {V(ANODE,CATHODE)} = (0,0) (30,1)` instance produces
-      ZERO wired expressions, not a routing to CORE-12 (Xyce) or a plain
-      CORE-11 parse (ngspice) as the epic's acceptance criteria required.
-      B-source V=/I= wiring, behavioral R=/C=/L= wiring, and the
-      plain-passive-device-untouched behavior all DO work correctly (their
-      tests pass) — only the TABLE/POLY routing bullet is unmet. Fix needs:
-      recognize `raw_params` sequences starting with the literal tokens
-      "TABLE"/"POLY(...)" (these arrive as multiple whitespace-split tokens
-      per CORE-04/06's element parser, not one glued string — see how
-      CORE-12's xyce_sources.rs already parses a joined TABLE string, to
-      decide whether wiring should re-join raw_params before calling it or
-      whether xyce_sources needs a token-slice-based entry point instead).
+    status: review
+    review: >
+      Fixed 2026-07-31 (commit b20ebc3). wire_runtime_in_scope() now
+      recognizes a `TABLE`/`POLY(...)` token as the first raw_params entry
+      on E/G/F/H sources: under Xyce it routes the rejoined text to
+      xyce_sources::parse_xyce_table() (CORE-12); under ngspice it goes
+      through the plain CORE-11 runtime parser. VALUE= form also
+      recognized. Confirmed by re-running the regression test
+      (test_e_source_table_form_produces_wired_expression) directly —
+      passes; #[ignore] marker removed 2026-07-31 since it had been left
+      on after the fix landed.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
+      test pass (0 ignored). Previously blocked: TABLE/POLY forms produced
+      zero wired expressions, never routed to any expression parser.
     depends_on: [CORE-11, CORE-12, CORE-14]
     summary: >
       The runtime-grammar counterpart to CORE-26: for every `B`/`E`/`G`
@@ -1617,34 +1625,22 @@ epics:
   - id: CORE-31
     title: Parse dialect-specific analysis/output statements
     area: statements-analysis-dialect-specific
-    status: blocked
-    blocked: >
-      2026-07-31. Zero tests existed; added a full batch. Recognition of
-      every listed keyword under its OWN dialect works correctly (.DISTO/
-      .PZ/etc under ngspice; .STEP/.HB/etc under Xyce; .DATA/.ENDDATA
-      bounded block; .MEASURE and .MEAS both spellings, both dialects) —
-      all pass. But the two explicit cross-dialect-flagging acceptance
-      bullets are both violated, confirmed by two permanent
-      #[ignore]d regression tests:
-      (1) servers/core/src/parser/xyce.rs is_xyce_analysis() (~line 117)
-      merges the ngspice-only keyword list (.DISTO/.NOISE/.PZ/.SP/.FOUR/
-      .PROBE/.WIDTH) directly into its own accepted-set with no diagnostic
-      — a `.PZ` line under Dialect::Xyce is silently accepted as a valid
-      Statement::Analysis{dialect_tag: "xyce"}, never flagged as
-      ngspice-only. Test: parser::xyce::tests::
-      test_ngspice_only_keyword_flagged_under_xyce.
-      (2) servers/core/src/parser/ngspice.rs is_ngspice_analysis() (~line
-      100) has NO Xyce-only-keyword list at all — a `.STEP` line under
-      Dialect::Ngspice falls straight through to Statement::Unrecognized
-      with zero explanation that it's Xyce-only (the "ngspice has no
-      native .STEP" fact from docs/GRAMMAR.md §7 is not surfaced anywhere).
-      Test: parser::ngspice::tests::
-      test_xyce_only_keyword_flagged_under_ngspice.
-      Fix needs: split is_xyce_analysis()'s keyword list into a
-      Xyce-native set and a separate "known ngspice-only, reject with a
-      named diagnostic" set (same shape needed in reverse for
-      is_ngspice_analysis() plus a genuinely-new Xyce-only-keyword list it
-      currently lacks entirely).
+    status: review
+    review: >
+      Fixed 2026-07-31 (commit b20ebc3). is_xyce_analysis() in
+      servers/core/src/parser/xyce.rs no longer accepts the ngspice-only
+      keywords (.DISTO/.NOISE/.PZ/.SP/.FOUR/.PROBE/.WIDTH) silently — they
+      now produce an explicit "ngspice-only" diagnostic under Xyce.
+      is_ngspice_analysis() in ngspice.rs gained a genuinely new
+      Xyce-only-keyword list (.STEP/.HB/.LIN/.SAMPLING/.PCE/.RESULT/.SAVE/
+      .PREPROCESS/.FFT) that now rejects them with an explicit
+      "Xyce-only" diagnostic under ngspice, instead of silently falling
+      through to Unrecognized. Confirmed by re-running both regression
+      tests directly — both pass; #[ignore] markers removed 2026-07-31
+      since they'd been left on after the fix landed.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
+      test pass (0 ignored). Previously blocked: cross-dialect keyword
+      flagging was missing entirely in both directions.
     depends_on: [CORE-30]
     summary: >
       Extend the `Statement` enum and both dialect parsers with the
