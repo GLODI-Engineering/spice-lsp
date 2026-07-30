@@ -3,6 +3,8 @@ pub mod diagnostics;
 pub mod ngspice_compiletime;
 pub mod ngspice_runtime;
 pub mod token;
+pub mod wiring_compiletime;
+pub mod wiring_runtime;
 pub mod xyce;
 pub mod xyce_sources;
 
