@@ -1,0 +1,14 @@
+[package]
+name = "spice-core"
+version = "0.0.0"
+edition = "2021"
+description = "Dialect-agnostic SPICE netlist lexer/parser/symbol-table core (ngspice, Xyce, later LTspice)."
+license = "MIT"
+publish = false
+
+[lib]
+name = "spice_core"
+
+[dependencies]
+
+[dev-dependencies]

@@ -1,0 +1,277 @@
+# progress.core.yaml — spice-lsp core v1 epic plan
+#
+# Scope:  servers/core — the spice_core Rust crate (dialect-agnostic
+#         lexer/parser/symbol-table engine for ngspice + Xyce netlists).
+# Spec:   docs/GRAMMAR.md
+# Cutoff: v1 = enough to power basic diagnostics/hover/go-to-definition for
+#         .subckt/.model references in single-file, single-dialect netlists.
+#         Multi-file .include resolution, full expression evaluation (not
+#         just parsing), and LTspice are out of scope for v1.
+#
+# ── Conventions ─────────────────────────────────────────────────────────────
+# Two agent tracks per epic:
+#   - implementation.owner: coder-agent    — writes the code
+#   - tests.owner:          tester-agent   — writes and runs the tests
+# The two tracks may run in parallel once the epic's contract is fixed.
+# An epic is COMPLETE only when:
+#   - all implementation.acceptance items pass
+#   - all tests.acceptance items pass
+#   - the test suite at tests.paths is green
+#   - the gates in AGENTS.md relevant to this scope are green
+#
+# Status values: planned | in_progress | review | complete | blocked
+# depends_on:   list of epic ids that must be status: complete before this starts
+# ────────────────────────────────────────────────────────────────────────────
+
+version: 1
+target: core-v1
+spec: docs/GRAMMAR.md
+
+phases:
+  - id: P0
+    name: Foundation
+    epics: [CORE-01, CORE-02, CORE-03]
+  - id: P1
+    name: ngspice dialect overlay
+    epics: [CORE-04, CORE-05]
+  - id: P2
+    name: Xyce dialect overlay
+    epics: [CORE-06, CORE-07]
+
+epics:
+
+  - id: CORE-01
+    title: Line preprocessing (comments, continuation)
+    area: lexical-rules
+    status: planned
+    depends_on: []
+    summary: >
+      Implement the dialect-parameterized line-preprocessing pass described
+      in docs/GRAMMAR.md §1: strip full-line and end-of-line comments, join
+      `+`-continuation lines (and ngspice's trailing-`\` form) onto the
+      previous logical line, while preserving a mapping back to original
+      source line numbers for diagnostics. This must run before any
+      statement-level tokenizing. Dialect differences to encode: ngspice
+      accepts `$`/`//` (and historically `;`) as end-of-line comment
+      starters and does not allow continuation on `.title`/`.lib`/`.include`
+      lines; Xyce accepts only `;` for end-of-line comments and has no
+      documented continuation exception list.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/lexer.rs
+      acceptance:
+        - "preprocess() strips a full-line `*` comment for both dialects, replacing it with an empty logical line (not removing the line — line numbers must stay stable for diagnostics mapping)."
+        - "preprocess(Dialect::Ngspice) treats `$` and `//` as end-of-line comment starters; preprocess(Dialect::Xyce) treats only `;` as one."
+        - "preprocess() joins a line whose first non-blank character is `+` onto the previous logical line, separated by a single space, for both dialects."
+        - "preprocess(Dialect::Ngspice) also joins a line via a trailing `\\` continuation marker; preprocess(Dialect::Xyce) does not treat trailing `\\` as a continuation marker."
+        - "preprocess(Dialect::Ngspice) does NOT apply continuation joining to lines whose logical statement begins with `.title`, `.lib`, or `.include` (per docs/GRAMMAR.md §1)."
+        - "The returned preprocessed representation retains, for every logical line, the 1-based original source line number(s) it was built from, so a later diagnostic can point at the right physical line."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/lexer.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_ngspice_full_line_comment_preserves_line_numbers"
+        - "test_ngspice_eol_comment_dollar_and_slashslash"
+        - "test_xyce_eol_comment_semicolon_only"
+        - "test_plus_continuation_both_dialects"
+        - "test_ngspice_backslash_continuation"
+        - "test_xyce_no_backslash_continuation"
+        - "test_ngspice_title_line_not_continued"
+        - "edge case: empty file"
+        - "edge case: file with only comments"
+        - "edge case: continuation on the very first line (malformed input — must not panic)"
+
+  - id: CORE-02
+    title: Common-core AST types
+    area: common-ast
+    status: planned
+    depends_on: []
+    summary: >
+      Define the dialect-agnostic AST types shared by both dialects, per
+      docs/GRAMMAR.md §3/§6/§7 and the adopted core+overlay architecture
+      (§9.2): a statement enum covering element instances, `.subckt`/`.ends`,
+      `.model`, `.param`, `.func`, `.include`/`.lib`, and a generic
+      "unrecognized/dialect-specific statement" variant that carries the raw
+      tokens forward rather than failing to parse. Device-letter meaning and
+      per-dialect statement forms are explicitly NOT modeled here — those are
+      resolved by a per-dialect overlay consulted by the parser (CORE-03).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/ast.rs
+      acceptance:
+        - "A `Statement` enum exists with at least variants for: ElementInstance, Subckt, Ends, Model, Param, Func, Include, Lib, Comment, Unrecognized."
+        - "ElementInstance stores: device letter (char), name (String), an ordered node list (Vec<String>), and an ordered raw-parameter list (Vec<String>) — no dialect-specific parameter parsing at this layer."
+        - "Every Statement variant carries the source line-number span it was parsed from (using CORE-01's line-number mapping)."
+        - "Unrecognized carries the original raw line text unmodified, so a dialect overlay or a later parser stage can reinterpret it without data loss."
+        - "None of the AST types reference a `Dialect` value directly — dialect-specificity lives outside this module, per the architecture invariant in AGENTS.md."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/ast.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_element_instance_construction_roundtrip"
+        - "test_statement_variants_carry_line_span"
+        - "test_unrecognized_preserves_raw_text"
+
+  - id: CORE-03
+    title: Dialect overlay trait + device-letter table
+    area: dialect-overlay
+    status: planned
+    depends_on: [CORE-02]
+    summary: >
+      Implement the per-dialect overlay mechanism the architecture decision
+      in docs/GRAMMAR.md §9.2 calls for: a `DialectOverlay` trait (or
+      equivalent data-table approach) that maps a device letter to its
+      meaning for a given `Dialect`, explicitly handling the documented
+      same-letter collisions from docs/GRAMMAR.md §3.2 (`P` = coupled
+      multiconductor line in ngspice vs. S-parameter port device in Xyce;
+      `U` = uniform-RC-line-or-XSPICE-digital in ngspice vs. behavioral
+      digital device in Xyce). This is the seam later epics (ngspice/Xyce
+      device parsing, operator tables) plug into.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/dialect.rs
+      acceptance:
+        - "A lookup function/trait method exists that, given (Dialect, device_letter: char), returns a dialect-specific device-kind identifier or an explicit \"unknown for this dialect\" result — never silently reuses another dialect's meaning for the same letter."
+        - "Device letter `P` resolves to different, distinctly-named device kinds for Dialect::Ngspice vs Dialect::Xyce."
+        - "Device letter `U` resolves to different, distinctly-named device kinds for Dialect::Ngspice vs Dialect::Xyce."
+        - "The device-kind lookup table is data (a match arm or static table per dialect module), not a shared table with dialect-conditional branches mixed into the same match arm — satisfies the AGENTS.md architecture invariant."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/dialect.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_device_letter_p_collision_resolves_differently_per_dialect"
+        - "test_device_letter_u_collision_resolves_differently_per_dialect"
+        - "test_unknown_device_letter_returns_explicit_none_not_panic"
+        - "test_common_device_letters_agree_across_dialects (e.g. R, C, L, V, I)"
+
+  - id: CORE-04
+    title: ngspice element-instance parser
+    area: ngspice-devices
+    status: planned
+    depends_on: [CORE-03]
+    summary: >
+      Parse ngspice element-instance lines (docs/GRAMMAR.md §3.1/§3.2) from
+      preprocessed logical lines into `ElementInstance` AST nodes, using the
+      CORE-03 overlay to resolve device-letter meaning. Covers the common
+      two/three/four-terminal devices (R, C, L, D, Q, M, J, V, I, X) plus
+      ngspice-specific letters (A, N, O, U, P, Y). Does not yet parse
+      brace-expression parameter values beyond capturing them as raw text
+      (that's CORE-08+, expression grammar, out of this epic).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs
+      acceptance:
+        - "parse_element(Dialect::Ngspice, line) correctly splits node list vs. trailing parameter list for R/C/L/V/I/D/Q/M/J/X per the field orders in docs/GRAMMAR.md §3.1."
+        - "parse_element(Dialect::Ngspice, line) resolves an `A`-prefixed line as an XSPICE code-model instance, not a generic unrecognized statement."
+        - "parse_element(Dialect::Ngspice, line) resolves a `U`-prefixed line using the ngspice-specific meaning from CORE-03, not Xyce's."
+        - "A malformed element line (too few nodes for the resolved device kind) produces a diagnostic-carrying error value, not a panic."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "one test per device letter in the common table, asserting node/param split"
+        - "test_ngspice_a_device_xspice_code_model"
+        - "test_ngspice_u_device_resolves_ngspice_meaning"
+        - "test_malformed_element_line_returns_diagnostic_not_panic"
+
+  - id: CORE-05
+    title: ngspice .subckt/.model/.param statement parser
+    area: ngspice-structural
+    status: planned
+    depends_on: [CORE-04]
+    summary: >
+      Parse ngspice `.subckt`/`.ends`, `.model`, and `.param` statements
+      (docs/GRAMMAR.md §6.1/§6.2/§4.1) into their AST forms, including the
+      confirmed ngspice-specific facts: no `PARAMS:` keyword (bare
+      `ident=value` only), `.` as the hierarchy name-mangling separator
+      (parsed here only insofar as recognizing the statement shape — actual
+      flattening/name-mangling is a later symbol-table epic).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs
+      acceptance:
+        - "parse_subckt() rejects a leading `PARAMS:` token as invalid ngspice syntax (with a diagnostic), per the confirmed finding in docs/GRAMMAR.md §6.1."
+        - "parse_subckt() accepts bare `ident=value` pairs after the node list as subcircuit parameter defaults."
+        - "parse_model() captures model name, model type, and the raw parenthesized parameter list."
+        - "parse_param() accepts multiple `ident=expr` assignments space-separated on one line, capturing each expr as raw text (not yet evaluated)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_subckt_rejects_params_keyword"
+        - "test_subckt_bare_ident_value_defaults"
+        - "test_model_captures_type_and_raw_params"
+        - "test_param_multiple_assignments_one_line"
+
+  - id: CORE-06
+    title: Xyce element-instance parser
+    area: xyce-devices
+    status: planned
+    depends_on: [CORE-03]
+    summary: >
+      Parse Xyce element-instance lines (docs/GRAMMAR.md §3.1/§3.2) into
+      `ElementInstance` AST nodes, using the CORE-03 overlay to resolve
+      device-letter meaning. Covers the common devices plus Xyce-specific
+      letters/families (P = port device, Y<type> family including YACC,
+      YDELAY, YLIN, YMEMRISTOR, ytransline, YPDE), and the BJT
+      bracketed-substrate-node quirk (`Q6 VC 4 11 [SUB] LAXPNP`) from
+      docs/GRAMMAR.md §3.2.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "parse_element(Dialect::Xyce, line) resolves a `P`-prefixed line as a port device using the Xyce-specific meaning from CORE-03, not ngspice's coupled-multiconductor-line meaning."
+        - "parse_element(Dialect::Xyce, line) correctly parses a bracketed optional substrate node on a BJT line, e.g. `Q6 VC 4 11 [SUB] LAXPNP`, distinguishing it from a 4-numeric-node form."
+        - "parse_element(Dialect::Xyce, line) recognizes the Y<type> family (YACC, YDELAY, YLIN, YMEMRISTOR, ytransline, YPDE) as distinct device kinds, not a generic Y fallback."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/xyce.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_xyce_p_device_is_port_not_ngspice_cpl"
+        - "test_xyce_bjt_bracketed_substrate_node"
+        - "test_xyce_bjt_no_substrate_node_still_parses"
+        - "one test per Y<type> device family"
+
+  - id: CORE-07
+    title: Xyce .subckt/.model/.param(+.global_param) statement parser
+    area: xyce-structural
+    status: planned
+    depends_on: [CORE-06]
+    summary: >
+      Parse Xyce `.subckt`/`.ends`, `.model`, `.param`, and `.global_param`
+      statements (docs/GRAMMAR.md §6.1/§6.2/§4.1/§4.2), including: `PARAMS:`
+      keyword accepted (unlike ngspice), `:` as the default hierarchy
+      name-mangling separator, `.model` parenthesization rule (single pair
+      around the whole list, no PSpice-style partial/nested parens, no
+      comma-separated params), and `.global_param`'s stricter scoping
+      (top-level only, cannot define functions, cannot be redefined across
+      hierarchy levels).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "parse_subckt() accepts an optional `PARAMS:` token before the ident=value defaults, per docs/GRAMMAR.md §6.1 (Xyce, unlike ngspice)."
+        - "parse_model() rejects a PSpice-style partially-parenthesized or comma-separated parameter list with a diagnostic, per docs/GRAMMAR.md §6.2."
+        - "parse_global_param() is a distinct AST/parse path from parse_param(), not a thin alias, since v1's parser must be able to flag `.global_param` appearing inside a `.subckt` body as invalid (docs/GRAMMAR.md §4.2)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/xyce.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_subckt_accepts_optional_params_keyword"
+        - "test_model_rejects_partial_parens"
+        - "test_model_rejects_comma_separated_params"
+        - "test_global_param_inside_subckt_is_diagnostic"
