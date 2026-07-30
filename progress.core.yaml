@@ -712,7 +712,16 @@ epics:
   - id: CORE-14
     title: Symbol table core types + single-file scope-tree builder
     area: symbols-foundation
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/scope.rs tests pass
+      (part of the 278-test full suite). Nested/sibling .subckt definitions
+      produce correctly-shaped scope trees; unterminated .subckt and
+      orphan .ends both return diagnostics, not panics; .ends name mismatch
+      is Warning severity (not Error), matching the epic's own guidance
+      since the manuals don't confirm Xyce enforces this either. Gate:
+      cargo fmt clean, cargo clippy -D warnings clean, 278/278 cargo test
+      pass (full workspace suite).
     depends_on: [CORE-05, CORE-07]
     summary: >
       Introduce the symbol-table foundation: a `Scope`/`ScopeChain` data
@@ -755,7 +764,15 @@ epics:
   - id: CORE-15
     title: Global .subckt/.model name-uniqueness diagnostic
     area: symbols-uniqueness
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/uniqueness.rs tests
+      pass. Duplicate .subckt/.model names flagged; cross-kind (subckt vs
+      model) collision on the shared global namespace flagged; case-
+      insensitive duplicate detection confirmed; model-binning suffix
+      (basename.N) correctly exempted from the duplicate check. Gate:
+      cargo fmt clean, cargo clippy -D warnings clean, 278/278 cargo test
+      pass.
     depends_on: [CORE-14]
     summary: >
       Implement the docs/GRAMMAR.md §6.1 rule "All subcircuit and model
@@ -791,7 +808,19 @@ epics:
   - id: CORE-16
     title: .subckt/X call-site resolution + circular-reference detection
     area: symbols-subckt-resolution
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/subckt_resolution.rs
+      tests pass. X-calls resolve to their .subckt definition or produce an
+      undefined-reference diagnostic; node-count mismatches report both
+      counts; direct self-calls and transitive cycles are both detected via
+      graph traversal (not left to a hypothetical simulator-side hang), with
+      confirmed distinct dialect wording — ngspice message contains "would
+      not terminate" (textual-expansion framing), Xyce message contains
+      "forbidden in Xyce" (explicit-error framing); deep non-circular chains
+      produce no false positive; node 0 in a .subckt's own node list is
+      flagged. Gate: cargo fmt clean, cargo clippy -D warnings clean,
+      278/278 cargo test pass.
     depends_on: [CORE-15]
     summary: >
       Resolve every `X`-prefixed element instance (a subcircuit call) to
@@ -837,7 +866,17 @@ epics:
   - id: CORE-17
     title: .model reference resolution
     area: symbols-model-resolution
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/model_resolution.rs
+      tests pass. model_name_from_params() distinguishes a bare numeric
+      value (incl. SPICE scale-suffix chars) from a genuine model-name
+      identifier, so `R1 1 2 100` produces no diagnostic while `RMOD 3 7
+      RMODEL L=10u W=1u` correctly resolves/flags against .model cards;
+      devices with no model slot (V/I/E/F/G/H/X, via device_takes_model())
+      are skipped entirely; model-binning suffix resolution reuses CORE-15's
+      exemption logic correctly. Gate: cargo fmt clean, cargo clippy -D
+      warnings clean, 278/278 cargo test pass.
     depends_on: [CORE-15]
     summary: >
       Resolve every element instance's model-name reference (the token
@@ -877,7 +916,19 @@ epics:
   - id: CORE-18
     title: ngspice .param lexical-shadowing scope chain
     area: symbols-ngspice-param-scope
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/ngspice_param_scope.rs
+      tests pass. Confirmed the shadow-not-mutate semantics directly: after
+      an inner subckt scope locally reassigns `x`, resolving `x` from the
+      top-level scope still returns the original top-level value —
+      verifies true global mutation from inside a subckt is impossible, not
+      just that lookup order works. 10-level nesting resolves to the
+      innermost definition (the main→A→B→C `xx` example from docs/
+      GRAMMAR.md §6.1). Self-reference (`.param pip='pip+3'`) flagged;
+      used-before-assignment within a scope flagged distinctly from fully
+      undefined. Gate: cargo fmt clean, cargo clippy -D warnings clean,
+      278/278 cargo test pass.
     depends_on: [CORE-14, CORE-09]
     summary: >
       Implement ngspice's confirmed `.param` scoping rules from docs/
@@ -918,7 +969,19 @@ epics:
   - id: CORE-19
     title: Xyce .param/.global_param scope chain
     area: symbols-xyce-param-scope
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/xyce_param_scope.rs
+      tests pass. Confirmed the deliberate divergence from CORE-18: a
+      subckt-local .param sharing a top-level name needs no shadow-restore
+      mechanic (plain lexical scoping, test name makes the distinction
+      explicit). .global_param resolves uniformly regardless of query
+      origin (flat namespace, not part of the scope tree) and is flagged
+      as illegal if declared more than once anywhere, stricter than plain
+      .param's same-scope redefinition, which is Info-severity, not Error,
+      per the confirmed Xyce redefinition-tolerance finding. Sibling
+      subckts correctly do not see each other's local params. Gate: cargo
+      fmt clean, cargo clippy -D warnings clean, 278/278 cargo test pass.
     depends_on: [CORE-14, CORE-10]
     summary: >
       Implement Xyce's confirmed `.param`/`.global_param` scoping rules
@@ -962,7 +1025,18 @@ epics:
   - id: CORE-20
     title: Cross-scope identifier resolution for expressions
     area: symbols-ident-resolution
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/symbols/ident_resolution.rs
+      tests pass. Confirmed `Expr::Reference { .. } => {}` is a no-op match
+      arm — V()/I()/N() reference arguments are never recursed into, so
+      node/device names are never mis-flagged as undefined parameters,
+      exactly as scoped. Built-in function names and reserved special
+      variables (both dialects, case-insensitive) never flagged; subckt
+      formal-parameter defaults resolve as defined via the same binding set
+      as .param lines (no separate lookup mechanism); deep 10-level chains
+      from CORE-18 resolve correctly through this layer too. Gate: cargo
+      fmt clean, cargo clippy -D warnings clean, 278/278 cargo test pass.
     depends_on: [CORE-18, CORE-19]
     summary: >
       Tie the expression grammar (CORE-09/CORE-11 for ngspice, CORE-10/
