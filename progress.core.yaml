@@ -3,10 +3,20 @@
 # Scope:  servers/core — the spice_core Rust crate (dialect-agnostic
 #         lexer/parser/symbol-table engine for ngspice + Xyce netlists).
 # Spec:   docs/GRAMMAR.md
-# Cutoff: v1 = enough to power basic diagnostics/hover/go-to-definition for
-#         .subckt/.model references in single-file, single-dialect netlists.
-#         Multi-file .include resolution, full expression evaluation (not
-#         just parsing), and a reference tool are out of scope for v1.
+# Cutoff: v1 (P0-P4, CORE-01..20, complete) = diagnostics/hover/go-to-
+#         definition for .subckt/.model/.param references in single-file,
+#         single-dialect netlists.
+#         v1.1 (P5-P7, CORE-21..31) extends this to: multi-file
+#         .include/.lib resolution; wiring the CORE-08..12 expression
+#         parsers onto the raw text CORE-05/07 already capture in
+#         .param/.func/.model/subckt-defaults/B-E-G-source positions
+#         (parsing existed but wasn't yet invoked end-to-end from a real
+#         parsed document); and the remaining ngspice/Xyce statement types
+#         from docs/GRAMMAR.md §6.4/§7 (.global/.ic/.nodeset/.options,
+#         analysis statements) that currently fall through to
+#         Statement::Unrecognized. Full expression EVALUATION (not just
+#         parsing) and a reference tool remain out of scope until a reference tool reference
+#         docs are available.
 #
 # ── Conventions ─────────────────────────────────────────────────────────────
 # Two agent tracks per epic:
@@ -43,6 +53,15 @@ phases:
   - id: P4
     name: Symbol resolution & diagnostics
     epics: [CORE-14, CORE-15, CORE-16, CORE-17, CORE-18, CORE-19, CORE-20]
+  - id: P5
+    name: Multi-file .include/.lib resolution
+    epics: [CORE-21, CORE-22, CORE-23, CORE-24, CORE-25]
+  - id: P6
+    name: Expression-to-statement wiring
+    epics: [CORE-26, CORE-27]
+  - id: P7
+    name: Remaining statement coverage (non-a reference tool)
+    epics: [CORE-28, CORE-29, CORE-30, CORE-31]
 
 epics:
 
@@ -1077,3 +1096,448 @@ epics:
         - "test_subckt_formal_param_default_resolves_as_defined"
         - "test_deeply_nested_valid_reference_resolves (uses CORE-18's 10-level chain)"
         - "edge case: expression with no identifiers at all (pure literal) produces zero diagnostics"
+
+  - id: CORE-21
+    title: File search-path resolution for .include/.lib
+    area: multifile-path-resolution
+    status: planned
+    depends_on: [CORE-05, CORE-07]
+    summary: >
+      Implement the per-dialect search-path resolution rules from docs/
+      GRAMMAR.md §6.3 for turning a `Statement::Include`/`Statement::Lib`
+      filename argument into a resolved file path: ngspice searches
+      relative to the including file and via the `sourcepath` search-list
+      convention; Xyce uses a three-tier order (relative to the including
+      file's directory, then relative to the top-level netlist's directory,
+      then relative to the execution directory). File access must go
+      through an injectable filesystem abstraction (a trait with an
+      in-memory fake implementation for tests), not direct `std::fs` calls,
+      so this and downstream epics stay unit-testable without touching real
+      disk.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/include/mod.rs
+        - servers/core/src/include/fs.rs
+        - servers/core/src/include/resolve.rs
+      acceptance:
+        - "A `FileSystem` trait exists with at least `exists(path) -> bool` and `read_to_string(path) -> Result<String, _>`, plus an in-memory `FakeFileSystem` test implementation seeded from a `HashMap<PathBuf, String>`."
+        - "resolve_include_path(fs, including_file_dir, top_level_dir, exec_dir, raw_filename, dialect) tries ngspice's order (including-file dir, then any configured sourcepath entries) or Xyce's order (including-file dir, then top-level netlist dir, then exec dir) depending on dialect, returning the first path where `fs.exists()` is true."
+        - "A filename that resolves under none of the dialect's search locations produces a diagnostic naming the filename and every location that was tried, not a bare \"not found\"."
+        - "Quoted (`'file'`/`\"file\"`) and bare filename forms both resolve identically (quote characters stripped before path resolution)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/include/resolve.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_ngspice_resolves_relative_to_including_file"
+        - "test_xyce_resolves_relative_to_including_file_first"
+        - "test_xyce_falls_back_to_top_level_netlist_dir"
+        - "test_xyce_falls_back_to_exec_dir_last"
+        - "test_unresolvable_filename_lists_all_tried_locations"
+        - "test_quoted_filename_strips_quotes_before_resolution"
+
+  - id: CORE-22
+    title: .lib section extraction
+    area: multifile-lib-sections
+    status: planned
+    depends_on: [CORE-21]
+    summary: >
+      Implement `.LIB <section> ... .ENDL <section>` section splitting for
+      library files, per docs/GRAMMAR.md §6.3: a `.LIB filename section`
+      reference pulls in only the statements inside the matching
+      `.LIB section ... .ENDL section` block of the resolved file; content
+      outside any section block is not spliced in. A `.LIB filename` with
+      no section argument (ngspice's fallback, degrading to a plain include
+      under `ngbehavior=ps` per docs/GRAMMAR.md §6.3) is out of scope here
+      — that compat-mode behavior is not modeled by this crate; treat a
+      section-less ngspice `.LIB` as "whole file, no section filtering" for
+      now, which is the same effective behavior.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/include/lib_sections.rs
+      acceptance:
+        - "extract_lib_section(preprocessed_lines, section_name) returns only the logical lines lexically between the matching `.LIB <section_name>` and `.ENDL <section_name>` pair, case-insensitively matched, excluding the `.LIB`/`.ENDL` boundary lines themselves from the returned content."
+        - "A file containing multiple named sections returns only the requested one; sibling sections' content never leaks in."
+        - "A requested section name that does not exist in the file produces a diagnostic naming the section and the file, not an empty-but-silent result."
+        - "A `.LIB` reference with no section argument returns the whole file's content unfiltered."
+        - "Malformed section boundaries (a `.LIB <name>` with no matching `.ENDL <name>` before end of file) produce a diagnostic, not a panic or a silently-truncated section."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/include/lib_sections.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_extracts_matching_section_only"
+        - "test_multiple_sections_do_not_leak_into_each_other"
+        - "test_unknown_section_name_flagged"
+        - "test_no_section_argument_returns_whole_file"
+        - "test_unterminated_section_returns_diagnostic_not_panic"
+        - "test_case_insensitive_section_name_matching"
+
+  - id: CORE-23
+    title: Multi-file source-span / provenance model
+    area: multifile-provenance
+    status: planned
+    depends_on: [CORE-02]
+    summary: >
+      Introduce a `FileId`/source-map abstraction so a `Statement`'s
+      location can be traced back to which file it came from, not just a
+      line-number range within one file's text — a prerequisite for
+      merging multiple files' statement streams (CORE-24) without line-
+      number collisions, and for diagnostics to report "file X, line Y"
+      rather than an ambiguous bare line number once more than one file is
+      involved. This epic changes the SHAPE diagnostics/spans carry; it
+      does not itself resolve or merge any files.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/include/source_map.rs
+      acceptance:
+        - "A `FileId` type (newtype over an index) and a `SourceMap` registry exist, mapping each `FileId` to its resolved absolute path and original source text."
+        - "A `FileSpan { file: FileId, lines: LineSpan }` type exists, wrapping CORE-02's existing `LineSpan` with a file identity."
+        - "SourceMap::register(path, text) returns a stable `FileId` for a given path, returning the SAME id on a second call with the same canonicalized path (no duplicate registration of the same file)."
+        - "This epic does NOT modify `Statement`'s existing `LineSpan` fields in place — CORE-24 is responsible for deciding how `FileSpan` gets attached during multi-file merging, keeping this epic's surface purely additive/foundational."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/include/source_map.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_register_new_file_returns_id"
+        - "test_register_same_path_twice_returns_same_id"
+        - "test_different_paths_get_different_ids"
+        - "test_file_span_carries_both_file_id_and_line_range"
+
+  - id: CORE-24
+    title: Include-graph builder + circular-include detection
+    area: multifile-include-graph
+    status: planned
+    depends_on: [CORE-21, CORE-22, CORE-23]
+    summary: >
+      Implement the top-level multi-file resolution entry point: starting
+      from an entry file, recursively resolve every `Statement::Include`
+      and `Statement::Lib` (using CORE-21 for path resolution and CORE-22
+      for section extraction), re-run the CORE-01 lexer and the dialect's
+      CORE-05/CORE-07 statement parser on each newly-resolved file's
+      content, tag every resulting `Statement` with the `FileId`/
+      `FileSpan` from CORE-23, and detect circular includes (file A
+      includes file B which (transitively) includes file A) analogous to
+      CORE-16's subckt-cycle detection — same "textual splice never
+      terminates" framing applies here per docs/GRAMMAR.md §6.3, since
+      `.include` is textual splicing exactly like `.subckt` expansion.
+      Produces one merged, file-tagged statement stream representing the
+      whole multi-file document, ready for CORE-25 to feed into symbol
+      resolution.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/include/graph.rs
+      acceptance:
+        - "resolve_includes(entry_path, fs, dialect) returns a single ordered `Vec<(FileId, Statement)>` (or equivalent file-tagged structure) where every `Statement::Include`/`Statement::Lib` in the entry file and all transitively-included files has been replaced in-place by the parsed statements of its resolved target, preserving relative order (matching both dialects' textual-splice semantics)."
+        - "A direct self-include (file A includes itself) is detected and produces a diagnostic before any infinite work is attempted, not a hang or stack overflow."
+        - "A transitive cycle (A includes B includes A) is detected and the diagnostic names the full chain of files, analogous to CORE-16's subckt-cycle chain naming."
+        - "A missing/unresolvable include (CORE-21 returns no match) produces a diagnostic at the `.include`/`.lib` statement's own span and the surrounding document still resolves as far as possible (the unresolvable statement is skipped, not treated as a hard stop for the rest of the document) — matching the general principle established since CORE-04 that malformed input produces a diagnostic, never a panic or a silent abort of unrelated work."
+        - "`.lib` section extraction (CORE-22) is invoked correctly per `Statement::Lib`'s section argument, and an unresolvable section (CORE-22's diagnostic) is surfaced the same way as an unresolvable file."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/include/graph.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_single_level_include_splices_statements_in_order"
+        - "test_nested_includes_resolve_transitively"
+        - "test_direct_self_include_detected_not_hung"
+        - "test_transitive_include_cycle_detected_and_chain_named"
+        - "test_missing_include_file_flagged_rest_of_document_still_resolves"
+        - "test_lib_section_reference_resolves_via_core22"
+        - "test_lib_unresolvable_section_flagged"
+
+  - id: CORE-25
+    title: Wire multi-file statements into symbol resolution
+    area: multifile-symbol-integration
+    status: planned
+    depends_on: [CORE-24, CORE-20]
+    summary: >
+      Retrofit CORE-14's scope-tree builder (and by extension CORE-15
+      through CORE-20, which all operate on that scope tree) to accept
+      CORE-24's merged multi-file statement stream instead of a single
+      file's `Vec<Statement>`, since `.subckt`/`.model`/`.param`
+      definitions in an included file must resolve exactly as if they had
+      been textually present in the including file (both dialects treat
+      `.include` as literal text splicing, per docs/GRAMMAR.md §6.3) — this
+      is a direct consequence of that splice semantics, not a new resolution
+      rule. Every diagnostic CORE-15..20 already produce must, after this
+      epic, report which file the offending statement came from (via
+      CORE-23's `FileId`), not just a bare line number.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/scope.rs
+        - servers/core/src/symbols/uniqueness.rs
+        - servers/core/src/symbols/subckt_resolution.rs
+        - servers/core/src/symbols/model_resolution.rs
+      acceptance:
+        - "build_scope_tree() accepts an optional file-tagged input (from CORE-24) in addition to its existing single-file `Vec<Statement>` signature — single-file callers (existing CORE-14..20 test fixtures) continue to work unmodified, satisfying the AGENTS.md non-regression expectation implicitly (no existing CORE-01..20 test needs to change)."
+        - "A `.subckt` defined in an included file is resolvable from an `X`-call in the including file (CORE-16 resolution succeeds across the file boundary) — the reverse (an including-file `.subckt` visible to code that merely got included, i.e. an included file trying to reference something only the includer defines) is NOT required, since ngspice/Xyce would encounter the include before parsing later includer content top-to-bottom; document this ordering constraint explicitly rather than silently getting it wrong in either direction."
+        - "A duplicate `.subckt`/`.model` name split across two files (one in the entry file, one in an included file) is still caught by CORE-15's uniqueness check, with both diagnostic locations correctly attributing their respective files."
+        - "Every diagnostic type already produced by CORE-15/16/17 includes file identity in its output once a multi-file input was used to build the scope tree; single-file callers are unaffected (their diagnostics implicitly reference the one file, exactly as before)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/scope.rs   # additional #[cfg(test)] cases
+      acceptance:
+        - "test_subckt_defined_in_included_file_resolves_from_includer"
+        - "test_ordering_constraint_included_file_cannot_see_later_includer_content"
+        - "test_duplicate_name_across_two_files_caught_with_both_file_locations"
+        - "test_existing_single_file_core14_20_tests_still_pass_unmodified (regression guard — run the full existing symbols test module, not new tests)"
+
+  - id: CORE-26
+    title: Wire compile-time expression parsing onto .param/.func/.model/subckt-default text
+    area: expr-wiring-compiletime
+    status: planned
+    depends_on: [CORE-09, CORE-10, CORE-14]
+    summary: >
+      Close a gap identified while testing CORE-14..20: those epics track
+      `.param` bindings as raw strings and never actually invoke CORE-08's
+      tokenizer or CORE-09/CORE-10's compile-time expression parsers on
+      real captured text. This epic is the wiring: for every
+      `Statement::Param`/`GlobalParam` assignment value, every `.func`
+      body, every `.subckt` formal-parameter default, and every `.model`
+      parameter value that looks like a brace-expression, run the
+      dialect-appropriate compile-time parser (CORE-09 for ngspice, CORE-10
+      for Xyce) and attach the resulting `Expr` (or a parse diagnostic) to
+      that statement/field. This is what makes CORE-13's cross-dialect
+      lints and any future hover/evaluation feature reachable from a real
+      parsed document instead of only from hand-built test fixtures.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/wiring_compiletime.rs
+      acceptance:
+        - "wire_compiletime_expressions(scope_tree, dialect) walks every `.param`/`.global_param` assignment, `.func` body, and `.subckt` param default in the tree and produces a parsed `Expr` for each, using CORE-09 under Dialect::Ngspice and CORE-10 under Dialect::Xyce."
+        - "A `.model` parameter value is only run through the expression parser when it is brace-delimited (`{expr}`) per docs/GRAMMAR.md §2.11.2/§4.1 — a plain SPICE number or bare identifier model parameter is NOT force-parsed as an expression, avoiding false-positive diagnostics on ordinary numeric model parameters."
+        - "A parse failure on any one item produces a diagnostic scoped to that item's span and does not abort wiring for the rest of the document (one bad `.param` line does not prevent every other `.param` line in the file from being resolved)."
+        - "CORE-13's existing lint functions, when run against the `Expr` values this epic attaches, fire correctly on real parsed `.param`/`.func` text (not just hand-built `Expr` fixtures) — verified by a small end-to-end fixture, not just unit-level re-tests of CORE-13 itself."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/wiring_compiletime.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_param_assignment_gets_parsed_expr_ngspice"
+        - "test_param_assignment_gets_parsed_expr_xyce"
+        - "test_func_body_gets_parsed_expr"
+        - "test_subckt_default_gets_parsed_expr"
+        - "test_model_brace_expression_parsed"
+        - "test_model_plain_number_not_force_parsed_as_expression"
+        - "test_one_bad_param_does_not_block_rest_of_document"
+        - "test_end_to_end_caret_lint_fires_on_real_parsed_param_text"
+
+  - id: CORE-27
+    title: Wire runtime expression parsing onto B/E/G-source and behavioral R/L/C text
+    area: expr-wiring-runtime
+    status: planned
+    depends_on: [CORE-11, CORE-12, CORE-14]
+    summary: >
+      The runtime-grammar counterpart to CORE-26: for every `B`/`E`/`G`
+      (and `H`/`F` where a POLY/VALUE form applies) element instance, and
+      every behavioral `R=`/`C=`/`L=`/`Q=` form on a passive device, locate
+      the behavioral-expression-bearing entries in `ElementInstance.
+      raw_params` (identified by their `I=`/`V=`/`R=`/`C=`/`L=`/`Q=`
+      prefix, or the `TABLE`/`POLY`/`VALUE` keyword forms per docs/
+      GRAMMAR.md §5), and run the dialect-appropriate runtime parser
+      (CORE-11 for ngspice, CORE-12+CORE-10 for Xyce's TABLE/POLY-over-
+      unified-grammar) on the expression text, attaching the resulting
+      `Expr`/`TableExpr` or a parse diagnostic.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/wiring_runtime.rs
+      acceptance:
+        - "wire_runtime_expressions(scope_tree, dialect) locates every `I=`/`V=` entry on a B-source instance and parses it with CORE-11 (ngspice) or the Xyce unified grammar (Xyce), attaching the result to that instance."
+        - "A `TABLE {expr} = (...)` or `POLY(N) ...` form on an E/F/G/H instance is routed to CORE-12's Xyce-specific handling when dialect is Xyce, and to a plain CORE-11 parse of the equivalent ngspice syntax when dialect is Ngspice — the two dialects' TABLE/POLY text is NOT run through the same code path, since their syntax (and clamp-vs-extrapolate semantics) genuinely differ per docs/GRAMMAR.md §5.2."
+        - "A behavioral `R=`/`C=`/`L=`/`Q=` entry on an R/C/L device is recognized and parsed the same way as a B-source's `I=`/`V=`, not treated as an ordinary numeric parameter."
+        - "A non-behavioral element (e.g. a plain `R1 1 2 100`) is left entirely untouched by this pass — no attempt to expression-parse ordinary numeric/model parameters that were already correctly classified as non-expression by CORE-17's bare-value heuristic."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/wiring_runtime.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_b_source_v_equals_parsed_ngspice"
+        - "test_b_source_i_equals_parsed_ngspice"
+        - "test_e_source_table_form_routed_to_xyce_handling_under_xyce"
+        - "test_e_source_table_form_routed_to_ngspice_handling_under_ngspice"
+        - "test_behavioral_r_equals_parsed_like_b_source"
+        - "test_plain_passive_device_untouched_by_runtime_wiring"
+
+  - id: CORE-28
+    title: Parse .GLOBAL / .IC / .NODESET / .TEMP / .CSPARAM statements
+    area: statements-misc-common
+    status: planned
+    depends_on: [CORE-05, CORE-07]
+    summary: >
+      Extend the `Statement` enum and both dialect parsers to recognize
+      `.GLOBAL`, `.IC`, `.NODESET`, `.TEMP`, and `.CSPARAM` (docs/
+      GRAMMAR.md §6.4) as first-class statements instead of falling through
+      to `Statement::Unrecognized`. These are common-shape across both
+      dialects (same statement forms; `.CSPARAM` is confirmed ngspice-only
+      per docs/GRAMMAR.md §6, so the Xyce parser should recognize but flag
+      it as an ngspice-only extension rather than silently accept it as
+      portable). No semantic resolution (e.g. checking `.IC` node names
+      against the actual circuit topology) is in scope here — this epic is
+      purely "recognize the statement shape and capture its arguments,"
+      matching the structural-capture-first pattern already used for
+      `.model`'s raw parameter list.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/ast.rs
+        - servers/core/src/parser/ngspice.rs
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "New `Statement` variants exist: Global(Vec<String> node names), Ic(Vec<(String node_expr, String value)>), Nodeset(same shape as Ic, or an `all=value` special form), Temp(String raw value), Csparam(same assignment shape as Param)."
+        - "`.GLOBAL node1 node2 ...` parses into `Statement::Global` with the full node-name list, for both dialects."
+        - "`.IC V(node)=value ...` and `.NODESET V(node)=value ...` both parse into their respective variants, correctly handling multiple assignments on one line like `.PARAM` already does."
+        - "`.NODESET all=value` (the ngspice-specific special form) parses without error under Dialect::Ngspice; under Dialect::Xyce (which docs/GRAMMAR.md doesn't confirm supports this form) it still parses structurally but the statement carries a dialect-note diagnostic flagging it as unconfirmed-for-Xyce, rather than either silently accepting or hard-rejecting an unconfirmed case."
+        - "`.CSPARAM` parses under Dialect::Ngspice; under Dialect::Xyce it parses but produces an info-level \"ngspice-only extension\" diagnostic, consistent with docs/GRAMMAR.md §6's confirmed ngspice-only status."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # additional #[cfg(test)] cases
+        - servers/core/src/parser/xyce.rs   # additional #[cfg(test)] cases
+      acceptance:
+        - "test_global_multiple_nodes_both_dialects"
+        - "test_ic_multiple_assignments_both_dialects"
+        - "test_nodeset_multiple_assignments_both_dialects"
+        - "test_nodeset_all_equals_value_ngspice"
+        - "test_nodeset_all_equals_value_xyce_flagged_unconfirmed"
+        - "test_temp_single_value_both_dialects"
+        - "test_csparam_ngspice_no_diagnostic"
+        - "test_csparam_xyce_info_diagnostic"
+
+  - id: CORE-29
+    title: Parse .OPTIONS (dialect-divergent shape)
+    area: statements-options
+    status: planned
+    depends_on: [CORE-05, CORE-07]
+    summary: >
+      Extend the `Statement` enum and both dialect parsers to recognize
+      `.OPTIONS`, encoding the confirmed structural divergence from docs/
+      GRAMMAR.md §6.4: ngspice uses one flat `.OPTIONS opt=val ...`
+      namespace; Xyce requires a package keyword,
+      `.OPTIONS <PKG> name=value ...` (DEVICE, TIMEINT, NONLIN, LINSOL,
+      OUTPUT, PARSER, SENSITIVITY, HBINT, MEASURE, ...), and Xyce's
+      `.OPTIONS` is documented as top-level-only (occurrence inside a
+      `.subckt` should be flagged, mirroring the pattern CORE-07 already
+      established for `.global_param`). Option name/value semantic
+      validation (e.g. is `TNOM` a real DEVICE-package option) is
+      explicitly out of scope for this epic — capture structurally only,
+      consistent with docs/GRAMMAR.md §6.4's own framing of `.options` as a
+      large, evolving catalog not worth hand-validating in v1.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/ast.rs
+        - servers/core/src/parser/ngspice.rs
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "A `Statement::Options { package: Option<String>, assignments: Vec<(String, Option<String>)> }` variant exists, reusing the ident[=value] pair shape already established for `.param`."
+        - "ngspice `.OPTIONS opt1 opt2=val ...` parses with `package: None` and the flat assignment list (bare flags like `opt1` captured with a `None` value, matching `.subckt`'s existing bare-param-default handling)."
+        - "Xyce `.OPTIONS DEVICE tnom=27 scale=1.0` parses with `package: Some(\"DEVICE\")` and the assignment list; a Xyce `.OPTIONS` line with no package keyword produces a diagnostic (Xyce requires one, per docs/GRAMMAR.md §6.4) rather than silently defaulting to `package: None`."
+        - "A Xyce `.OPTIONS` statement occurring inside a `.subckt` body produces a diagnostic (\"top-level only\"), using the same subckt_depth tracking mechanism CORE-07 already built for `.global_param`."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # additional #[cfg(test)] cases
+        - servers/core/src/parser/xyce.rs   # additional #[cfg(test)] cases
+      acceptance:
+        - "test_ngspice_options_flat_namespace_bare_and_valued_flags"
+        - "test_xyce_options_requires_package_keyword"
+        - "test_xyce_options_missing_package_keyword_flagged"
+        - "test_xyce_options_inside_subckt_flagged_top_level_only"
+        - "test_xyce_options_at_top_level_is_ok"
+
+  - id: CORE-30
+    title: Parse common analysis statements (.AC/.DC/.TRAN/.OP)
+    area: statements-analysis-common
+    status: planned
+    depends_on: [CORE-05, CORE-07]
+    summary: >
+      Extend the `Statement` enum and both dialect parsers to recognize the
+      four analysis statements docs/GRAMMAR.md §7 confirms share syntax
+      across both dialects: `.AC`, `.DC`, `.OP`, and `.TRAN`. Structural
+      capture only (argument list, not semantic validation of sweep
+      ranges). Must encode the one confirmed semantic trap from docs/
+      GRAMMAR.md §7 as a standing diagnostic-worthy fact rather than
+      silently treating the two dialects' `.TRAN` identically: Xyce's docs
+      explicitly state its first `.TRAN` argument is the *initial timestep*
+      where classic SPICE/ngspice's is the *print interval* — same syntax
+      position, different meaning, not just a documentation footnote.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/ast.rs
+        - servers/core/src/parser/ngspice.rs
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "Statement variants Ac, Dc, Op, Tran exist, each capturing its raw argument list (not semantically parsed sweep bounds — consistent with `.model`'s raw-params precedent)."
+        - "`.AC <LIN|OCT|DEC> <points> <fstart> <fstop>` parses for both dialects into `Statement::Ac`."
+        - "`.DC <src> <start> <stop> <step> [<src2> <start2> <stop2> <step2>]` parses for both dialects, capturing the optional nested-sweep second variable set when present."
+        - "`.OP` (no arguments) parses for both dialects."
+        - "`.TRAN <step> <tstop> [<tstart> [<tmax>]] [UIC]` parses for both dialects; the resulting `Statement::Tran` carries a dialect tag (or the caller supplies dialect at query time) so a hover feature can surface the confirmed first-argument meaning divergence (print-interval vs. initial-timestep) without re-deriving it from docs each time — mirrors how CORE-13 already exposes dialect-aware interpretation notes for expressions."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # additional #[cfg(test)] cases
+        - servers/core/src/parser/xyce.rs   # additional #[cfg(test)] cases
+      acceptance:
+        - "test_ac_dec_form_both_dialects"
+        - "test_dc_single_sweep_both_dialects"
+        - "test_dc_nested_sweep_both_dialects"
+        - "test_op_no_args_both_dialects"
+        - "test_tran_basic_form_both_dialects"
+        - "test_tran_with_uic_both_dialects"
+
+  - id: CORE-31
+    title: Parse dialect-specific analysis/output statements
+    area: statements-analysis-dialect-specific
+    status: planned
+    depends_on: [CORE-30]
+    summary: >
+      Extend the `Statement` enum and both dialect parsers with the
+      remaining analysis/output statements docs/GRAMMAR.md §7 documents as
+      dialect-specific, captured structurally (raw argument list per
+      statement, no semantic validation): ngspice-only — `.DISTO`, `.NOISE`,
+      `.PZ`, `.SENS` (ngspice form), `.SP`, `.FOUR`, `.PROBE`, `.WIDTH`;
+      Xyce-only — `.STEP`, `.HB`, `.LIN`, `.SAMPLING`, `.EMBEDDEDSAMPLING`,
+      `.PCE`, `.DATA`/`.ENDDATA`, `.SENS` (Xyce form), `.RESULT`, `.SAVE`,
+      `.PREPROCESS`, `.FFT`; both — `.MEASURE`/`.MEAS` (captured as one raw
+      statement per docs/GRAMMAR.md §7's note that its sub-grammar is large
+      and not confirmed field-for-field identical between dialects — do not
+      attempt to model its TRIG-TARG/FIND-WHEN sub-forms in this epic).
+      Given the sheer number of statement types here, prioritize correct
+      *recognition* (not falling through to Unrecognized, and not
+      cross-contaminating dialect-specific statements into the wrong
+      dialect's accepted set) over deep per-statement argument modeling.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/ast.rs
+        - servers/core/src/parser/ngspice.rs
+        - servers/core/src/parser/xyce.rs
+      acceptance:
+        - "Every statement name listed in the summary is recognized as a distinct, correctly-dialect-scoped `Statement` variant (or a shared `Statement::AnalysisOrOutput { keyword: String, raw_args: String }` catch-all variant, at the implementer's discretion, as long as the keyword and dialect-scoping are both preserved) rather than falling through to `Statement::Unrecognized`."
+        - "An ngspice-only keyword (e.g. `.PZ`) encountered under Dialect::Xyce produces a diagnostic naming it as ngspice-only, rather than being silently accepted or silently falling to Unrecognized with no explanation."
+        - "A Xyce-only keyword (e.g. `.STEP`, `.HB`) encountered under Dialect::Ngspice produces the mirror diagnostic — this directly encodes the confirmed finding from docs/GRAMMAR.md §7 that ngspice has no native `.STEP` (it's emulated via `.control` + `alter` + `run`, not a statement ngspice's grammar itself accepts)."
+        - "`.DATA <name> ... .ENDDATA` (Xyce) is recognized as a bounded multi-line block (like `.SUBCKT`/`.ENDS`), not misparsed as a sequence of unrelated statements between the two markers."
+        - "`.MEASURE`/`.MEAS` is recognized (both spellings, both dialects) and its full raw text captured as one statement, explicitly NOT decomposed into TRIG/TARG/FIND/WHEN sub-fields in this epic."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/parser/ngspice.rs   # additional #[cfg(test)] cases
+        - servers/core/src/parser/xyce.rs   # additional #[cfg(test)] cases
+      acceptance:
+        - "one recognition test per ngspice-only keyword listed in the summary"
+        - "one recognition test per Xyce-only keyword listed in the summary"
+        - "test_ngspice_only_keyword_flagged_under_xyce (using .PZ as the example)"
+        - "test_xyce_only_keyword_flagged_under_ngspice (using .STEP as the example)"
+        - "test_data_enddata_block_bounded_correctly"
+        - "test_measure_both_spellings_both_dialects_captured_as_raw_statement"
