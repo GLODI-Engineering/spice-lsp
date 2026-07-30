@@ -1305,9 +1305,9 @@ epics:
   - id: CORE-25
     title: Wire multi-file statements into symbol resolution
     area: multifile-symbol-integration
-    status: review
+    status: complete
     review: >
-      Fixed 2026-07-31. Went with option (b) from the blocked note (a
+      Retested 2026-07-31. Went with option (b) from the blocked note (a
       side-mapping), realized as disjoint virtual-line-number blocks
       rather than a literal side-table: SourceMap::assign_offset(file,
       line_count) reserves a block per file, include::graph::
@@ -1318,14 +1318,21 @@ epics:
       already-complete code or tests. Also fixed a second, related bug
       found in the process: .lib section statements were being attributed
       to the including file's FileId instead of the library file's own.
-      The regression test was rewritten to use .model duplicates instead
-      of .subckt duplicates after discovering CORE-15 has its own,
-      separate pipeline-integration bug (see CORE-15's new blocked note) —
-      not fixed here, out of this epic's scope.
-      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
-      test pass (0 ignored). Previously blocked: FileId was discarded
-      before build_scope_tree(), so no diagnostic could report which file
-      it came from.
+      Filled the one missing tests.acceptance item
+      (test_ordering_constraint_included_file_cannot_see_later_includer_content):
+      writing it surfaced that its premise was wrong — .subckt resolution
+      is not order-sensitive across a file boundary (collect_subckt_
+      definitions() gathers the whole tree up front; only .param
+      evaluation is confirmed sequential in docs/GRAMMAR.md). Replaced
+      with test_cross_file_subckt_resolution_is_order_independent, which
+      verifies the actual correct behavior. The regression test was
+      rewritten to use .model duplicates instead of .subckt duplicates
+      after discovering CORE-15 has its own, separate pipeline-integration
+      bug (see CORE-15's blocked note) — not fixed here, out of this
+      epic's scope.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 360/360 cargo
+      test pass (0 ignored). All tests.acceptance items now have real,
+      passing coverage.
     depends_on: [CORE-24, CORE-20]
     summary: >
       Retrofit CORE-14's scope-tree builder (and by extension CORE-15
@@ -1415,20 +1422,23 @@ epics:
   - id: CORE-27
     title: Wire runtime expression parsing onto B/E/G-source and behavioral R/L/C text
     area: expr-wiring-runtime
-    status: review
+    status: complete
     review: >
-      Fixed 2026-07-31 (commit b20ebc3). wire_runtime_in_scope() now
+      Retested 2026-07-31 (fix in commit b20ebc3). wire_runtime_in_scope()
       recognizes a `TABLE`/`POLY(...)` token as the first raw_params entry
       on E/G/F/H sources: under Xyce it routes the rejoined text to
       xyce_sources::parse_xyce_table() (CORE-12); under ngspice it goes
-      through the plain CORE-11 runtime parser. VALUE= form also
-      recognized. Confirmed by re-running the regression test
-      (test_e_source_table_form_produces_wired_expression) directly —
-      passes; #[ignore] marker removed 2026-07-31 since it had been left
-      on after the fix landed.
-      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
-      test pass (0 ignored). Previously blocked: TABLE/POLY forms produced
-      zero wired expressions, never routed to any expression parser.
+      through the plain CORE-11 runtime parser — a genuinely different
+      code path, not just a generic catch-all, confirmed by the two
+      dialect-specific tests
+      test_e_source_table_form_routed_to_{xyce,ngspice}_handling_under_
+      {xyce,ngspice} (the missing half of this epic's tests.acceptance,
+      added and passing). VALUE= form also recognized. #[ignore] marker
+      removed since the underlying fix had landed but the marker was
+      never cleaned up.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 360/360 cargo
+      test pass (0 ignored). All tests.acceptance items now have real,
+      passing coverage.
     depends_on: [CORE-11, CORE-12, CORE-14]
     summary: >
       The runtime-grammar counterpart to CORE-26: for every `B`/`E`/`G`
@@ -1625,9 +1635,9 @@ epics:
   - id: CORE-31
     title: Parse dialect-specific analysis/output statements
     area: statements-analysis-dialect-specific
-    status: review
+    status: complete
     review: >
-      Fixed 2026-07-31 (commit b20ebc3). is_xyce_analysis() in
+      Retested 2026-07-31 (fix in commit b20ebc3). is_xyce_analysis() in
       servers/core/src/parser/xyce.rs no longer accepts the ngspice-only
       keywords (.DISTO/.NOISE/.PZ/.SP/.FOUR/.PROBE/.WIDTH) silently — they
       now produce an explicit "ngspice-only" diagnostic under Xyce.
@@ -1635,12 +1645,15 @@ epics:
       Xyce-only-keyword list (.STEP/.HB/.LIN/.SAMPLING/.PCE/.RESULT/.SAVE/
       .PREPROCESS/.FFT) that now rejects them with an explicit
       "Xyce-only" diagnostic under ngspice, instead of silently falling
-      through to Unrecognized. Confirmed by re-running both regression
-      tests directly — both pass; #[ignore] markers removed 2026-07-31
-      since they'd been left on after the fix landed.
-      Gate: cargo fmt clean, cargo clippy -D warnings clean, 355/355 cargo
-      test pass (0 ignored). Previously blocked: cross-dialect keyword
-      flagging was missing entirely in both directions.
+      through to Unrecognized. #[ignore] markers removed since they'd been
+      left on after the fix landed. Also closed a coverage gap: only 2 of
+      8 ngspice-only and 2 of 12 Xyce-only keywords had individual
+      recognition tests despite the epic asking for one per keyword —
+      added table-driven tests (test_every_{ngspice,xyce}_only_keyword_recognized)
+      covering the rest.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 360/360 cargo
+      test pass (0 ignored). All tests.acceptance items now have real,
+      passing coverage.
     depends_on: [CORE-30]
     summary: >
       Extend the `Statement` enum and both dialect parsers with the
