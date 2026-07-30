@@ -238,7 +238,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CORE-27 blocked: wire_runtime_in_scope() only looks for V=/I=/R=/C=/L=/Q=-prefixed raw_params entries; a TABLE {expr} = (...) or POLY(N) ... form on an E/F/G/H instance is not recognized by any prefix check, so it produces zero wired expressions instead of being routed to CORE-12 (Xyce) or CORE-11 (ngspice). See progress.core.yaml CORE-27 blocked note."]
     fn test_e_source_table_form_produces_wired_expression() {
         // Xyce-style: ET2 2 0 TABLE {V(ANODE,CATHODE)} = (0,0) (30,1)
         let scope = Scope {

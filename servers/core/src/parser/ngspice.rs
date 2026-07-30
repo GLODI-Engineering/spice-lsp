@@ -1222,7 +1222,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CORE-31 blocked: is_ngspice_analysis() has no Xyce-only-keyword check at all, so .STEP/.HB/etc fall through to Unrecognized under ngspice with zero explanation instead of a 'this is Xyce-only' diagnostic. See progress.core.yaml CORE-31 blocked note."]
     fn test_xyce_only_keyword_flagged_under_ngspice() {
         // .STEP is Xyce-only per docs/GRAMMAR.md §7 — ngspice has no native
         // .STEP (emulated via .control+alter+run). It must not be silently

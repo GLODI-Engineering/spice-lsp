@@ -1103,7 +1103,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CORE-31 blocked: is_xyce_analysis() merges ngspice-only keywords (.PZ, .DISTO, .NOISE, .SP, .FOUR, .PROBE, .WIDTH) into its accepted-under-Xyce set with no diagnostic, silently treating them as valid Xyce statements. See progress.core.yaml CORE-31 blocked note."]
     fn test_ngspice_only_keyword_flagged_under_xyce() {
         // .PZ is ngspice-only per docs/GRAMMAR.md §7 — must not be
         // silently accepted as a recognized Xyce Analysis statement.
