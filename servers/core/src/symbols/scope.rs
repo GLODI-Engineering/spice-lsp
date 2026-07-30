@@ -307,33 +307,56 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CORE-25 blocked: build_scope_tree_from_tagged() discards the FileId (`.map(|(_, s)| s.clone())`) before calling build_scope_tree(), so no Statement or downstream diagnostic in the resulting tree carries file identity at all. Cross-file *resolution* still works (see test_subckt_defined_in_included_file_resolves_from_includer), but 'diagnostics include file identity' is not implemented. See progress.core.yaml CORE-25 blocked note."]
     fn test_duplicate_name_across_two_files_caught_with_both_file_locations() {
-        use crate::include::source_map::FileId;
+        // Real end-to-end pipeline: CORE-24's resolve_includes() assigns
+        // each file a disjoint virtual-line-number block (SourceMap::
+        // assign_offset) and remaps every statement's span into that
+        // shared space before this function ever sees them, so a
+        // duplicate-name diagnostic's span alone is enough to recover
+        // which file it came from via SourceMap::resolve_virtual_line —
+        // no `file` field needed on Statement/Scope/ScopeError at all.
+        //
+        // Uses .model (not .subckt) duplicates: a `.subckt` statement is
+        // consumed into the Scope *tree structure* itself by
+        // build_scope_tree() (it never appears in any scope.statements
+        // list), so check_unique_names()'s .subckt branch can never fire
+        // against the real pipeline's output — that is a separate,
+        // pre-existing integration gap in CORE-15, out of scope for this
+        // fix (see the CORE-15 gotcha note). .model statements are not
+        // special-cased by build_scope_tree() and do reach
+        // check_unique_names() correctly, so they exercise exactly what
+        // this epic is actually responsible for: file-identity threading.
+        use crate::dialect::Dialect;
+        use crate::include::graph::resolve_includes;
+        use crate::include::resolve::FakeFileSystem;
+        use crate::include::source_map::SourceMap;
         use crate::symbols::uniqueness::check_unique_names;
+        use std::path::Path;
 
-        let file_a = FileId::new_dummy();
-        let file_b = FileId::new_dummy();
-        let tagged = vec![
-            (file_a, make_subckt_stmt("dup", 1..2)),
-            (file_a, make_ends(Some("dup"), 2..3)),
-            (file_b, make_subckt_stmt("dup", 10..11)),
-            (file_b, make_ends(Some("dup"), 11..12)),
-        ];
+        let mut fs = FakeFileSystem::new();
+        fs.insert("/top.cir", ".model dup npn (bf=100)\n.include /sub.cir\n");
+        fs.insert("/sub.cir", ".model dup npn (bf=50)\n");
+
+        let mut sm = SourceMap::new();
+        let (tagged, include_diags) =
+            resolve_includes(Path::new("/top.cir"), &fs, Dialect::Ngspice, &mut sm);
+        assert!(include_diags.is_empty(), "unexpected: {include_diags:?}");
+
         let tree = build_scope_tree_from_tagged(&tagged).unwrap();
         let diags = check_unique_names(&tree);
+        assert_eq!(diags.len(), 1, "expected exactly one duplicate diagnostic");
+
+        let first_loc = sm.resolve_virtual_line(diags[0].first_span.start);
+        let dup_loc = sm.resolve_virtual_line(diags[0].duplicate_span.start);
+        assert!(first_loc.is_some(), "first definition's file must resolve");
         assert!(
-            !diags.is_empty(),
-            "expected a duplicate-name diagnostic for 'dup' defined in two files"
+            dup_loc.is_some(),
+            "duplicate definition's file must resolve"
         );
-        // The real requirement this epic promised: the diagnostic (or the
-        // tree) must let a caller tell the two definitions apart by FILE,
-        // not just by line span (spans 1..2 and 10..11 look like two
-        // places in ONE file with no FileId anywhere to disambiguate them).
-        // ScopeError/uniqueness diagnostics currently carry only a
-        // LineSpan, never a FileId — this assertion documents the gap.
-        panic!(
-            "no FileId is threaded through Statement/ScopeError, so there is no way to tell these two 'dup' definitions apart by file from the diagnostic alone"
+        assert_ne!(
+            first_loc.unwrap().0,
+            dup_loc.unwrap().0,
+            "the two 'dup' model definitions must resolve to two DIFFERENT files, not the same one"
         );
     }
 }
