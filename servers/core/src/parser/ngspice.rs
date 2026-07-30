@@ -1222,6 +1222,22 @@ mod tests {
     }
 
     #[test]
+    fn test_every_ngspice_only_keyword_recognized() {
+        // One recognition test per ngspice-only keyword, per CORE-31's
+        // tests.acceptance. .DISTO and .PZ already have dedicated tests
+        // above; this fills in the rest of the list from the epic summary.
+        for kw in [".NOISE", ".SENS", ".SP", ".FOUR", ".PROBE", ".WIDTH"] {
+            let src = format!("{kw} 1 2 3 4\n");
+            let s = ok_statements(parsed(&src));
+            assert!(
+                matches!(s[0], Statement::Analysis { .. }),
+                "{kw} should be recognized as an Analysis statement under ngspice, got {:?}",
+                s[0]
+            );
+        }
+    }
+
+    #[test]
     fn test_xyce_only_keyword_flagged_under_ngspice() {
         // .STEP is Xyce-only per docs/GRAMMAR.md §7 — ngspice has no native
         // .STEP (emulated via .control+alter+run). It must not be silently
