@@ -307,6 +307,54 @@ mod tests {
     }
 
     #[test]
+    fn test_cross_file_subckt_resolution_is_order_independent() {
+        // Corrects a premise in this epic's original acceptance bullet
+        // ("test_ordering_constraint_included_file_cannot_see_later_
+        // includer_content"): that bullet assumed .subckt resolution is
+        // forward-only / order-sensitive across the include boundary. It
+        // is not — per CORE-16's own implementation
+        // (subckt_resolution.rs: collect_subckt_definitions() gathers
+        // every .subckt in the whole tree up front, then resolve_in_scope
+        // looks up X-calls against that full set regardless of textual
+        // position) and per docs/GRAMMAR.md, only `.param` evaluation is
+        // confirmed sequential/order-sensitive for ngspice — `.subckt`
+        // resolution is a whole-document post-parse lookup in both
+        // dialects, exactly like within a single file. This test verifies
+        // the actual (correct) behavior: an included file's X-call CAN
+        // resolve against a .subckt defined later in the includer file.
+        use crate::include::source_map::FileId;
+        use crate::symbols::subckt_resolution::resolve_subckt_calls;
+
+        let file_a = FileId::new_dummy();
+        let file_b = FileId::new_dummy();
+        let tagged = vec![
+            // file_b (included) calls a subckt that only file_a (the
+            // includer) defines, and defines it AFTER the .include point.
+            (
+                file_b,
+                Statement::ElementInstance(ElementInstance {
+                    device_letter: 'X',
+                    name: "X1".into(),
+                    nodes: vec![],
+                    raw_params: vec!["late_defined".into()],
+                    subckt_name: Some("late_defined".into()),
+                    span: 1..2,
+                }),
+            ),
+            (file_a, make_subckt_stmt("late_defined", 2..3)),
+            (file_a, make_ends(Some("late_defined"), 3..4)),
+        ];
+        let tree = build_scope_tree_from_tagged(&tagged).unwrap();
+        let diags = resolve_subckt_calls(&tree, crate::dialect::Dialect::Ngspice);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("undefined subcircuit")),
+            "X1 should resolve against late_defined regardless of textual position: {diags:?}"
+        );
+    }
+
+    #[test]
     fn test_duplicate_name_across_two_files_caught_with_both_file_locations() {
         // Real end-to-end pipeline: CORE-24's resolve_includes() assigns
         // each file a disjoint virtual-line-number block (SourceMap::

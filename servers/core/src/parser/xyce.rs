@@ -1103,6 +1103,33 @@ mod tests {
     }
 
     #[test]
+    fn test_every_xyce_only_keyword_recognized() {
+        // One recognition test per Xyce-only keyword, per CORE-31's
+        // tests.acceptance. .STEP and .HB already have dedicated tests
+        // above; .DATA/.ENDDATA has its own bounded-block test; this fills
+        // in the rest of the list from the epic summary.
+        for kw in [
+            ".LIN",
+            ".SAMPLING",
+            ".EMBEDDEDSAMPLING",
+            ".PCE",
+            ".SENS",
+            ".RESULT",
+            ".SAVE",
+            ".PREPROCESS",
+            ".FFT",
+        ] {
+            let src = format!("{kw} 1 2 3 4\n");
+            let s = ok_statements(parsed(&src));
+            assert!(
+                matches!(s[0], Statement::Analysis { .. }),
+                "{kw} should be recognized as an Analysis statement under Xyce, got {:?}",
+                s[0]
+            );
+        }
+    }
+
+    #[test]
     fn test_ngspice_only_keyword_flagged_under_xyce() {
         // .PZ is ngspice-only per docs/GRAMMAR.md §7 — must not be
         // silently accepted as a recognized Xyce Analysis statement.
