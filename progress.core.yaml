@@ -40,6 +40,9 @@ phases:
   - id: P3
     name: Expression grammar
     epics: [CORE-08, CORE-09, CORE-10, CORE-11, CORE-12, CORE-13]
+  - id: P4
+    name: Symbol resolution & diagnostics
+    epics: [CORE-14, CORE-15, CORE-16, CORE-17, CORE-18, CORE-19, CORE-20]
 
 epics:
 
@@ -705,3 +708,298 @@ epics:
         - "test_xyce_ternary_colon_collision_not_flagged_on_hierarchical_node_path"
         - "test_xyce_ternary_colon_collision_not_flagged_when_parenthesized"
         - "test_no_lints_fire_on_dialect_correct_unambiguous_expression (negative case, both dialects)"
+
+  - id: CORE-14
+    title: Symbol table core types + single-file scope-tree builder
+    area: symbols-foundation
+    status: planned
+    depends_on: [CORE-05, CORE-07]
+    summary: >
+      Introduce the symbol-table foundation: a `Scope`/`ScopeChain` data
+      model and a builder that walks a single parsed document's
+      `Vec<Statement>` (the output of CORE-05's ngspice parser or CORE-07's
+      Xyce parser) and produces a scope tree rooted at the top-level
+      circuit, with one child scope per `.subckt`/`.ends` region, tracking
+      nesting depth. This epic is purely structural — it does NOT yet
+      resolve any reference or flag any diagnostic (that's CORE-15 through
+      CORE-20); it only builds the tree that those epics walk. Per the v1
+      cutoff already stated at the top of this file, this operates on a
+      single already-parsed document — cross-file `.include`/`.lib`
+      resolution is out of scope here.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/mod.rs
+        - servers/core/src/symbols/scope.rs
+        - servers/core/src/lib.rs
+      acceptance:
+        - "A `Scope` type exists carrying: its kind (TopLevel or Subckt{name}), its nesting depth, a reference/index back to the `Subckt` AST node that introduced it (for Subckt scopes), and the list of `Statement`s that lexically belong to it (not including nested subckt bodies)."
+        - "build_scope_tree(statements: &[Statement]) returns a tree/arena keyed so that every `.subckt`/`.ends` pair in the input produces exactly one child Scope of its lexically-enclosing scope, correctly handling nested `.subckt` definitions (a `.subckt` defined inside another `.subckt` body) to arbitrary depth."
+        - "An unterminated `.subckt` (no matching `.ends` before end of input) produces a diagnostic-carrying error identifying the unterminated `.subckt`'s name and start line, not a panic or a silently-truncated tree."
+        - "An `.ends` with no matching open `.subckt` produces a diagnostic-carrying error, not a panic."
+        - "An `.ends <name>` whose name does not match the currently-open `.subckt`'s name produces a diagnostic (per docs/GRAMMAR.md §6.1: ngspice does not check this, so treat it as ngspice-specific-lenient/Xyce-specific-strict per what CORE-04/CORE-06's existing element parsers already established about dialect divergence — if the manual doesn't specify Xyce checks it either, downgrade to a Warning severity rather than Error until confirmed)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/scope.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_top_level_scope_with_no_subckts"
+        - "test_single_subckt_produces_one_child_scope"
+        - "test_nested_subckt_definitions_produce_nested_scopes"
+        - "test_sibling_subckts_produce_sibling_scopes_not_nested"
+        - "test_unterminated_subckt_returns_diagnostic_not_panic"
+        - "test_ends_without_open_subckt_returns_diagnostic_not_panic"
+        - "test_ends_name_mismatch_produces_warning"
+        - "edge case: empty document (no statements at all)"
+
+  - id: CORE-15
+    title: Global .subckt/.model name-uniqueness diagnostic
+    area: symbols-uniqueness
+    status: planned
+    depends_on: [CORE-14]
+    summary: >
+      Implement the docs/GRAMMAR.md §6.1 rule "All subcircuit and model
+      names are considered global and must be unique" as a diagnostic pass
+      over a built scope tree: collect every `.subckt` name and every
+      `.model` name declared anywhere in the document (regardless of
+      nesting — the rule is global, not scope-local) and flag duplicates.
+      Model binning (`name.1`, `name.2` suffixes keyed by lmin/lmax/wmin/
+      wmax, same LEVEL) is a documented exception to plain-uniqueness and
+      must NOT be flagged as a duplicate — this epic must recognize the
+      binning suffix pattern and exempt it, per docs/GRAMMAR.md §6.2.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/uniqueness.rs
+      acceptance:
+        - "check_unique_names(scope_tree) returns one diagnostic per duplicate `.subckt` name, referencing both the original and the duplicate definition's spans."
+        - "check_unique_names(scope_tree) returns one diagnostic per duplicate `.model` name, same span-referencing behavior, EXCEPT when the duplicate follows the model-binning naming pattern (`basename.N` where N is an integer suffix and both cards share the same base name)."
+        - "A `.subckt` name and a `.model` name that happen to collide with each other (same identifier, different statement kind) is also flagged — docs/GRAMMAR.md §6.1 says subcircuit and model names share one global namespace, so this cross-kind collision is exactly as illegal as a same-kind one."
+        - "Names that differ only in case are treated as the SAME name for this check, consistent with the case-insensitivity established for both dialects in docs/GRAMMAR.md §1 (this is a case where a naive case-sensitive string comparison would silently miss a real collision)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/uniqueness.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_duplicate_subckt_names_flagged"
+        - "test_duplicate_model_names_flagged"
+        - "test_model_binning_suffix_not_flagged_as_duplicate"
+        - "test_subckt_and_model_name_collision_flagged"
+        - "test_case_insensitive_duplicate_detection"
+        - "test_no_diagnostic_for_all_unique_names (negative case)"
+
+  - id: CORE-16
+    title: .subckt/X call-site resolution + circular-reference detection
+    area: symbols-subckt-resolution
+    status: planned
+    depends_on: [CORE-15]
+    summary: >
+      Resolve every `X`-prefixed element instance (a subcircuit call) to
+      its `.subckt` definition within the scope tree, per docs/GRAMMAR.md
+      §6.1, and produce the diagnostics needed for a useful "go to
+      definition"/hover feature: undefined subcircuit reference, node-count
+      mismatch between the call site and the definition, and circular
+      subcircuit references (A calls B calls A, directly or transitively).
+      Per the confirmed finding in docs/GRAMMAR.md §6.1, ngspice has no
+      named "circular reference" error — its subckt expansion is pure
+      textual substitution, so a cycle is illegal by construction (would
+      hang, not cleanly error); Xyce documents an explicit error for it.
+      This epic's diagnostic message should reflect that framing
+      difference per dialect while producing the same practical result
+      (flag the cycle before it would cause a real expansion-time hang) in
+      both cases — the LSP's job is to catch this before a user ever runs
+      the netlist through a simulator.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/subckt_resolution.rs
+      acceptance:
+        - "resolve_subckt_calls(scope_tree, dialect) returns, for every X-element in the document, either a resolved reference to the matching `.subckt`'s AST node/span, or an \"undefined subcircuit\" diagnostic naming the referenced subckt name and the call site's span."
+        - "A resolved call whose node-list length does not match the referenced `.subckt`'s node-list length produces a diagnostic stating both counts (call-site count vs. definition count)."
+        - "A subckt-call graph containing a cycle (direct self-call, or A→B→A transitively) is detected via graph traversal (not by relying on any simulator-side error) and produces one diagnostic per distinct cycle, naming the full cycle chain (e.g. \"A → B → A\"), with dialect-appropriate wording: ngspice wording frames it as \"would not terminate during subcircuit expansion\" per docs/GRAMMAR.md §6.1's textual-substitution mechanism; Xyce wording frames it as the documented explicit error."
+        - "A non-circular, deeply-nested call chain (e.g. A→B→C→D with no cycle) does NOT produce a false-positive cycle diagnostic, regardless of depth."
+        - "Node `0` used as a `.subckt` formal-node-list entry is flagged as illegal, per docs/GRAMMAR.md §6.1 (\"external nodes...cannot be zero\"/\"node 0 cannot appear in the subckt's own node list\")."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/subckt_resolution.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_x_call_resolves_to_matching_subckt_definition"
+        - "test_undefined_subckt_reference_flagged"
+        - "test_node_count_mismatch_flagged_with_both_counts"
+        - "test_direct_self_call_cycle_detected"
+        - "test_transitive_cycle_detected_and_chain_named"
+        - "test_deep_non_circular_chain_not_flagged"
+        - "test_ngspice_cycle_message_frames_as_expansion_non_termination"
+        - "test_xyce_cycle_message_frames_as_explicit_error"
+        - "test_node_zero_in_subckt_node_list_flagged"
+
+  - id: CORE-17
+    title: .model reference resolution
+    area: symbols-model-resolution
+    status: planned
+    depends_on: [CORE-15]
+    summary: >
+      Resolve every element instance's model-name reference (the token
+      following the node list for devices that take one, e.g. D/Q/J/Z/M
+      and the `mname` argument on R/C/L when present) to its `.model`
+      definition in the scope tree, per docs/GRAMMAR.md §3.3/§6.2. Produces
+      an "undefined model" diagnostic and the data a hover/go-to-definition
+      feature needs. Must correctly recognize when a device instance does
+      NOT take a model reference at all (e.g. a plain `R1 1 2 100` with a
+      bare numeric value, vs. `RMOD 3 7 RMODEL L=10u W=1u` which does) so
+      it doesn't flag a false "undefined model" on ordinary passive
+      devices — this requires reusing the per-device-kind shape knowledge
+      already established in CORE-04/CORE-06's element parsers, not
+      re-deriving it.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/model_resolution.rs
+      acceptance:
+        - "resolve_model_references(scope_tree, dialect) returns, for every element instance whose raw_params shape indicates a model-name argument is present, either a resolved reference to the matching `.model`'s AST node/span, or an \"undefined model\" diagnostic naming the referenced model name and the instance's span."
+        - "A bare passive-device instance with only a numeric/expression value (e.g. `R1 1 2 100`, `C1 3 0 1u`) produces NO model-reference diagnostic at all — it is correctly recognized as not referencing a model, not as referencing an undefined one."
+        - "The same passive device WITH a model reference (e.g. `RMOD 3 7 RMODEL L=10u W=1u`) DOES get resolved/flagged appropriately, distinguishing this shape from the bare-value shape above using the first non-node token's syntactic form (identifier-that-is-not-a-number vs. a SPICE number)."
+        - "Model resolution respects the model-binning exemption from CORE-15: an instance referencing `MODNAME.2` resolves against a `.model MODNAME.2 ...` card if present, and is not confused with a plain `MODNAME` card."
+        - "Devices that structurally never take a model reference (per the CORE-03 dialect overlay's DeviceKind, e.g. V/I/E/F/G/H/X) are skipped entirely by this resolution pass, not run through the model-lookup logic at all."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/model_resolution.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_device_with_model_resolves_to_definition"
+        - "test_undefined_model_reference_flagged"
+        - "test_bare_passive_value_produces_no_model_diagnostic"
+        - "test_same_device_type_with_and_without_model_distinguished"
+        - "test_model_binning_suffix_resolves_correctly"
+        - "test_devices_without_model_slot_skipped_entirely (V, I, E, F, G, H, X)"
+
+  - id: CORE-18
+    title: ngspice .param lexical-shadowing scope chain
+    area: symbols-ngspice-param-scope
+    status: planned
+    depends_on: [CORE-14, CORE-09]
+    summary: >
+      Implement ngspice's confirmed `.param` scoping rules from docs/
+      GRAMMAR.md §4.2/§6.1: a top-level `.param` is global; a `.subckt`'s
+      formal parameters (ident=value after the node list) and any local
+      `.param` lines inside it shadow same-named globals until the
+      matching `.ends`; assigning to a global-named identifier inside a
+      subckt always creates a local shadow (true global mutation from
+      inside a subckt is impossible); nesting works up to 10 levels with
+      the innermost definition winning. Also encodes the confirmed
+      no-self-reference/no-recursion rule (`.param pip='pip+3'` is illegal
+      — a name must be fully assigned, once, before its first use;
+      sequential top-to-bottom evaluation order matters).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/ngspice_param_scope.rs
+      acceptance:
+        - "build_param_scope_chain(scope_tree) produces, for every Scope in the tree, an ordered lookup chain from innermost to outermost, where a `.param`/subckt-formal-param defined in an inner scope shadows (not errors on) a same-named definition in an outer scope."
+        - "resolve_param_ident(scope, name) returns the innermost definition reachable from `scope`'s chain, or `None` if undefined anywhere in the chain up to and including top-level."
+        - "A `.param` assignment inside a `.subckt` body whose identifier also exists as a top-level `.param` does NOT mutate the top-level definition — the top-level scope's lookup still returns its own original value after the subckt-local shadow goes out of scope (i.e. shadowing, not global mutation, is verified by checking the top-level binding is unchanged after processing the subckt scope)."
+        - "A chain of 10 nested subckt scopes each locally defining the same identifier resolves correctly to the innermost (10th-level) definition when queried from that innermost scope, per the documented nesting-depth-10 example in docs/GRAMMAR.md §6.1 (main circuit calls A→B→C, each with a formal param `xx`; only C's `xx` is visible from inside C)."
+        - "A `.param` statement whose expression (per CORE-09's Expr AST) references its own identifier on the right-hand side (direct self-reference, e.g. `.param pip='pip+3'`) produces a diagnostic — this is illegal in ngspice's compile-time grammar, per docs/GRAMMAR.md §6.1's confirmed no-recursion rule."
+        - "Within one scope, `.param` assignments are evaluated top-to-bottom for ordering purposes: a `.param` expression referencing an identifier not yet assigned earlier in the same or an enclosing scope (by source order) is flagged as \"used before assignment\", distinct from \"undefined\" (CORE-20 handles the fully-undefined case; this bullet is specifically about ordering within otherwise-valid scopes)."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/ngspice_param_scope.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_top_level_param_visible_from_subckt_scope"
+        - "test_subckt_local_param_shadows_top_level_same_name"
+        - "test_shadow_does_not_mutate_top_level_binding"
+        - "test_ten_level_nesting_resolves_to_innermost (the exact main→A→B→C xx example)"
+        - "test_self_reference_param_flagged"
+        - "test_used_before_assignment_within_scope_flagged"
+        - "test_undefined_returns_none_not_panic"
+
+  - id: CORE-19
+    title: Xyce .param/.global_param scope chain
+    area: symbols-xyce-param-scope
+    status: planned
+    depends_on: [CORE-14, CORE-10]
+    summary: >
+      Implement Xyce's confirmed `.param`/`.global_param` scoping rules
+      from docs/GRAMMAR.md §4.2: top-level `.param`/`.model`/`.func` are
+      visible everywhere (main circuit + all subcircuits); subcircuit-local
+      versions are visible only within that subcircuit and subcircuits
+      nested inside it (lexical, downward-only — NOT the same as ngspice's
+      shadow-then-restore semantics, since Xyce has no documented "local
+      copy created when reassigning a global name" mechanic; a Xyce
+      subckt-local `.param` with the same name as a top-level one is simply
+      a separate, non-interacting binding visible only in its own scope
+      subtree). `.global_param` is stricter still: top-level-declaration-
+      only (an occurrence inside a `.subckt` is already flagged at parse
+      time by CORE-07 — this epic does not re-check that), and MUST NOT be
+      redefined at any other level of the hierarchy (this cross-hierarchy
+      redefinition check DOES require the full scope tree, unlike the
+      parse-time subckt-nesting check, so it belongs here).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/xyce_param_scope.rs
+      acceptance:
+        - "build_param_scope_chain(scope_tree) for Xyce produces the same downward-visibility lookup chain shape as CORE-18's ngspice version for `.param`, but resolve_param_ident() must NOT implement CORE-18's shadow-then-restore semantics — verify via a test that a Xyce subckt-local `.param` of the same name as a top-level one does not require any special \"restore\" handling because Xyce's rule is plain lexical scoping, not shadow-with-mutation-protection."
+        - "resolve_global_param_ident(scope_tree, name) resolves a `.global_param` name uniformly to the same single top-level binding regardless of which scope in the tree the lookup originates from (global_params have no lexical/nesting behavior at all — they're a flat namespace layered on top of the scope tree, not part of it)."
+        - "A `.global_param` name that is declared more than once anywhere in the document (even if both declarations are syntactically at top level) is flagged as illegal redefinition, per docs/GRAMMAR.md §4.2's confirmed \"cannot be redefined across hierarchy levels\" rule — note this is stricter than plain `.param`'s tolerated same-scope redefinition (next bullet)."
+        - "A `.param` name declared more than once within the SAME scope is NOT an error by default (last-definition-wins, per docs/GRAMMAR.md §4.1's confirmed Xyce redefinition-tolerance finding) but produces an Info-severity diagnostic noting the earlier definition's span, so a hover/lint UI can surface it without treating it as a hard error."
+        - "A `.param` defined inside `.subckt` A does NOT resolve when queried from a sibling `.subckt` B's scope (even though both are children of the same top-level scope) — downward-only visibility from each subckt's own subtree, not lateral visibility between siblings."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/xyce_param_scope.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_top_level_param_visible_from_subckt_scope"
+        - "test_subckt_local_param_same_name_as_top_level_no_shadow_restore_needed"
+        - "test_global_param_resolves_uniformly_regardless_of_query_origin"
+        - "test_global_param_redefinition_anywhere_flagged"
+        - "test_param_same_scope_redefinition_is_info_not_error"
+        - "test_sibling_subckts_do_not_see_each_others_local_params"
+        - "test_undefined_returns_none_not_panic"
+
+  - id: CORE-20
+    title: Cross-scope identifier resolution for expressions
+    area: symbols-ident-resolution
+    status: planned
+    depends_on: [CORE-18, CORE-19]
+    summary: >
+      Tie the expression grammar (CORE-09/CORE-11 for ngspice, CORE-10/
+      CORE-12 for Xyce) to the scope chains built in CORE-18/CORE-19: walk
+      every `Expr::Ident` appearing in a `.param` RHS, `.model` parameter,
+      device instance parameter, or `.func` body, and resolve it against
+      the applicable scope chain for its dialect and lexical position,
+      producing an "undefined parameter" diagnostic for anything that
+      resolves to nothing AND is not one of: a built-in function name
+      (from CORE-09/CORE-10/CORE-11's function tables), a reserved special
+      variable (ngspice: time/temper/hertz; Xyce: TIME/FREQ/TEMP/VT/GMIN
+      per docs/GRAMMAR.md §1's reserved-identifier list), or a node name
+      referenced inside a V()/I()/N() Reference (node names are resolved
+      against the circuit's node set, not the parameter scope chain — that
+      is explicitly out of scope for this epic and not claimed as done
+      here). This is the epic that makes "undefined parameter" a real,
+      user-facing diagnostic rather than scattered scope-chain plumbing.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/symbols/ident_resolution.rs
+      acceptance:
+        - "resolve_expr_idents(expr, scope, dialect) walks an Expr tree and returns one \"undefined parameter\" diagnostic per Ident that is not resolvable via the dialect-appropriate scope chain (CORE-18 for Ngspice, CORE-19 for Xyce) and is not a known built-in function name or reserved special variable for that dialect."
+        - "A bare `Expr::Ident` that IS a known built-in function name from the relevant function table (e.g. `sin`, `sqrt` for ngspice; `DDT`, `LIMIT` for Xyce) is never itself flagged as undefined — this only matters for the case where an identifier appears WITHOUT being the callee of an `Expr::Call` (a bare reference to a function name, which is otherwise-meaningless input but must not crash or false-positive as \"undefined parameter\" when it's really \"identifier shadows a builtin\" or similar)."
+        - "`Expr::Ident` nodes that are arguments INSIDE an `Expr::Reference` (V()/I()/N() node/device references) are explicitly skipped by this resolution pass — they are node/device names, not parameter names, and resolving those against the circuit's node set is out of scope for this epic (must not be silently mis-flagged as undefined parameters)."
+        - "Reserved special variables (`time`/`temper`/`hertz` for ngspice; `TIME`/`FREQ`/`TEMP`/`VT`/`GMIN` for Xyce, case-insensitively per docs/GRAMMAR.md §1) are never flagged as undefined, in either the expression contexts that allow them (CORE-11's runtime grammar, Xyce's unified grammar) or rejected outright by grammar rules that already forbid them elsewhere (CORE-09's compile-time-context rejection already prevents them from reaching this resolver at all in that context)."
+        - "An identifier resolvable to a `.subckt`'s formal-parameter default (not just a `.param` line) is correctly treated as defined — subckt formal params and local `.param` lines share one scope-chain binding set per CORE-18/CORE-19, not two separate lookup mechanisms."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/symbols/ident_resolution.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_undefined_param_ident_flagged_ngspice"
+        - "test_undefined_param_ident_flagged_xyce"
+        - "test_builtin_function_name_never_flagged (both dialects)"
+        - "test_reference_arguments_skipped_not_flagged_as_undefined_param"
+        - "test_reserved_special_variables_never_flagged (both dialects, case-insensitive)"
+        - "test_subckt_formal_param_default_resolves_as_defined"
+        - "test_deeply_nested_valid_reference_resolves (uses CORE-18's 10-level chain)"
+        - "edge case: expression with no identifiers at all (pure literal) produces zero diagnostics"
