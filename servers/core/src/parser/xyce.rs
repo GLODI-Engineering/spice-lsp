@@ -99,6 +99,14 @@ fn parse_dot_command(line: &str, span: LineSpan, subckt_depth: u32) -> ParseResu
             raw_args: rest_after(&first_word(&upper), line),
             span,
         })
+    } else if is_ngspice_only_keyword(&upper) {
+        Err(ParseError {
+            message: format!(
+                "{} is an ngspice-only statement, not supported in Xyce",
+                first_word(&upper)
+            ),
+            span,
+        })
     } else {
         Ok(Statement::Unrecognized(line.to_string(), span))
     }
@@ -132,13 +140,13 @@ fn is_xyce_analysis(upper: &str) -> bool {
             | ".FFT"
             | ".MEASURE"
             | ".MEAS"
-            | ".DISTO"
-            | ".NOISE"
-            | ".PZ"
-            | ".SP"
-            | ".FOUR"
-            | ".PROBE"
-            | ".WIDTH"
+    )
+}
+fn is_ngspice_only_keyword(upper: &str) -> bool {
+    let kw = upper.split_whitespace().next().unwrap_or("");
+    matches!(
+        kw,
+        ".DISTO" | ".NOISE" | ".PZ" | ".SP" | ".FOUR" | ".PROBE" | ".WIDTH"
     )
 }
 fn parse_global(line: &str, span: LineSpan) -> ParseResult {
