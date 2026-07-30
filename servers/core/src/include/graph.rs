@@ -1,12 +1,98 @@
 use std::path::{Path, PathBuf};
 
-use crate::ast::Statement;
+use crate::ast::{LineSpan, Statement};
 use crate::dialect::Dialect;
 use crate::include::lib_sections;
 use crate::include::resolve::{resolve_include_path, FileSystem};
 use crate::include::source_map::{FileId, SourceMap};
 use crate::lexer;
 use crate::parser;
+
+fn line_count(text: &str) -> usize {
+    text.lines().count().max(1)
+}
+
+fn shift_span(span: LineSpan, offset: usize) -> LineSpan {
+    // Real line 1 must land exactly on `offset` (the base
+    // SourceMap::assign_offset reserved for this file), not `offset + 1` —
+    // real line L (1-based) maps to virtual line `offset + (L - 1)`.
+    (span.start + offset - 1)..(span.end + offset - 1)
+}
+
+/// Shift a Statement's own line span by `offset` virtual lines. This is how
+/// CORE-25 makes statements from different files mergeable into one
+/// Vec<Statement> without adding a `file` field to Statement/Scope: each
+/// file gets a disjoint block of virtual line numbers (see
+/// SourceMap::assign_offset), so a span is globally unique across the
+/// merged document and SourceMap::resolve_virtual_line can always recover
+/// which file a given span's line number actually came from.
+///
+/// Exhaustive over every Statement variant on purpose (no `_` arm) so this
+/// stays in sync if a new variant is ever added.
+fn remap_statement_span(stmt: Statement, offset: usize) -> Statement {
+    match stmt {
+        Statement::ElementInstance(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::ElementInstance(v)
+        }
+        Statement::Subckt(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::Subckt(v)
+        }
+        Statement::Ends(name, span) => Statement::Ends(name, shift_span(span, offset)),
+        Statement::Model(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::Model(v)
+        }
+        Statement::Param(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::Param(v)
+        }
+        Statement::GlobalParam(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::GlobalParam(v)
+        }
+        Statement::Func(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::Func(v)
+        }
+        Statement::Include(s, span) => Statement::Include(s, shift_span(span, offset)),
+        Statement::Lib(a, b, span) => Statement::Lib(a, b, shift_span(span, offset)),
+        Statement::Comment(span) => Statement::Comment(shift_span(span, offset)),
+        Statement::Unrecognized(s, span) => Statement::Unrecognized(s, shift_span(span, offset)),
+        Statement::Global(v, span) => Statement::Global(v, shift_span(span, offset)),
+        Statement::Ic(v, span) => Statement::Ic(v, shift_span(span, offset)),
+        Statement::Nodeset(v, span) => Statement::Nodeset(v, shift_span(span, offset)),
+        Statement::NodesetAll(s, span) => Statement::NodesetAll(s, shift_span(span, offset)),
+        Statement::Temp(s, span) => Statement::Temp(s, shift_span(span, offset)),
+        Statement::Csparam(v, span) => Statement::Csparam(v, shift_span(span, offset)),
+        Statement::Options {
+            package,
+            assignments,
+            span,
+        } => Statement::Options {
+            package,
+            assignments,
+            span: shift_span(span, offset),
+        },
+        Statement::CsparamInfo(s, span) => Statement::CsparamInfo(s, shift_span(span, offset)),
+        Statement::Ac(s, span) => Statement::Ac(s, shift_span(span, offset)),
+        Statement::Dc(s, span) => Statement::Dc(s, shift_span(span, offset)),
+        Statement::Op(span) => Statement::Op(shift_span(span, offset)),
+        Statement::Tran(s, span) => Statement::Tran(s, shift_span(span, offset)),
+        Statement::Analysis {
+            keyword,
+            dialect_tag,
+            raw_args,
+            span,
+        } => Statement::Analysis {
+            keyword,
+            dialect_tag,
+            raw_args,
+            span: shift_span(span, offset),
+        },
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncludeDiagnostic {
@@ -80,6 +166,7 @@ fn resolve_file(
     };
 
     let file_id = source_map.register(path.to_path_buf(), content.clone());
+    let base = source_map.assign_offset(file_id, line_count(&content));
 
     let processed = lexer::preprocess(&content, dialect);
     let parsed = parser::parse(&processed, dialect);
@@ -138,19 +225,30 @@ fn resolve_file(
                 ) {
                     Ok(resolved) => {
                         if let Some(sect) = section {
-                            if let Ok(content) = fs.read_to_string(&resolved) {
-                                let lib_processed = lexer::preprocess(&content, dialect);
+                            if let Ok(lib_content) = fs.read_to_string(&resolved) {
+                                // Register and offset the LIBRARY file itself, not the
+                                // including file — statements spliced from a .lib
+                                // section must be attributed to the file they actually
+                                // came from, per CORE-25's file-identity requirement.
+                                let lib_file_id =
+                                    source_map.register(resolved.clone(), lib_content.clone());
+                                let lib_base =
+                                    source_map.assign_offset(lib_file_id, line_count(&lib_content));
+                                let lib_processed = lexer::preprocess(&lib_content, dialect);
                                 match lib_sections::extract_lib_section(&lib_processed, sect) {
                                     Ok(section_lines) => {
                                         let lib_parsed = parser::parse(&section_lines, dialect);
                                         for s in lib_parsed.into_iter().flatten() {
-                                            statements.push((file_id, s));
+                                            statements.push((
+                                                lib_file_id,
+                                                remap_statement_span(s, lib_base),
+                                            ));
                                         }
                                     }
                                     Err(e) => {
                                         diagnostics.push(IncludeDiagnostic {
                                             message: format!("lib section error: {}", e.message),
-                                            file: file_id,
+                                            file: lib_file_id,
                                             span: span.clone(),
                                         });
                                     }
@@ -179,7 +277,7 @@ fn resolve_file(
                 }
             }
             _ => {
-                statements.push((file_id, stmt.clone()));
+                statements.push((file_id, remap_statement_span(stmt.clone(), base)));
             }
         }
     }
