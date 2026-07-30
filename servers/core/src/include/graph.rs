@@ -239,4 +239,67 @@ mod tests {
         assert!(!diags.is_empty());
         assert!(!stmts.is_empty());
     }
+
+    #[test]
+    fn test_nested_includes_resolve_transitively() {
+        let mut fs = FakeFileSystem::new();
+        fs.insert("/a.cir", "R1 1 2 100\n.include /b.cir\n");
+        fs.insert("/b.cir", "R2 3 4 200\n.include /c.cir\n");
+        fs.insert("/c.cir", "R3 5 6 300\n");
+
+        let mut sm = SourceMap::new();
+        let (stmts, diags) = resolve_includes(Path::new("/a.cir"), &fs, Dialect::Ngspice, &mut sm);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(stmts.len(), 3, "expected R1, R2, R3 spliced in order");
+        let names: Vec<String> = stmts
+            .iter()
+            .map(|(_, s)| match s {
+                Statement::ElementInstance(ei) => ei.name.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(names, vec!["R1", "R2", "R3"]);
+    }
+
+    #[test]
+    fn test_lib_section_reference_resolves_via_graph() {
+        let mut fs = FakeFileSystem::new();
+        fs.insert(
+            "/top.cir",
+            "R1 1 2 100\n.lib /parts.lib typical\nC1 3 0 1u\n",
+        );
+        fs.insert(
+            "/parts.lib",
+            ".lib typical\nR2 7 8 500\n.endl typical\n.lib fast\nR3 9 10 5\n.endl fast\n",
+        );
+
+        let mut sm = SourceMap::new();
+        let (stmts, diags) =
+            resolve_includes(Path::new("/top.cir"), &fs, Dialect::Ngspice, &mut sm);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<String> = stmts
+            .iter()
+            .map(|(_, s)| match s {
+                Statement::ElementInstance(ei) => ei.name.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        // Only the "typical" section's R2 should be spliced in, not "fast"'s R3.
+        assert_eq!(names, vec!["R1", "R2", "C1"]);
+    }
+
+    #[test]
+    fn test_lib_unresolvable_section_flagged() {
+        let mut fs = FakeFileSystem::new();
+        fs.insert("/top.cir", ".lib /parts.lib nonexistent_section\n");
+        fs.insert("/parts.lib", ".lib typical\nR2 7 8 500\n.endl typical\n");
+
+        let mut sm = SourceMap::new();
+        let (_stmts, diags) =
+            resolve_includes(Path::new("/top.cir"), &fs, Dialect::Ngspice, &mut sm);
+        assert!(
+            diags.iter().any(|d| d.message.contains("lib section")),
+            "expected a lib-section diagnostic, got: {diags:?}"
+        );
+    }
 }

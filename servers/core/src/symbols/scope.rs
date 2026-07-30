@@ -261,4 +261,79 @@ mod tests {
         assert!(result.statements.is_empty());
         assert!(result.children.is_empty());
     }
+
+    // --- CORE-25: multi-file tagged input ---
+
+    #[test]
+    fn test_subckt_defined_in_included_file_resolves_from_includer() {
+        use crate::include::source_map::FileId;
+
+        // Simulates: file B (included) defines .subckt opamp; file A (the
+        // includer) calls X1 ... opamp. build_scope_tree_from_tagged must
+        // splice both into one tree where the X-call's enclosing scope can
+        // still see the subckt definition, exactly as CORE-16 expects.
+        let file_a = FileId::new_dummy();
+        let file_b = FileId::new_dummy();
+        let tagged = vec![
+            (file_b, make_subckt_stmt("opamp", 1..2)),
+            (file_b, make_ends(Some("opamp"), 2..3)),
+            (
+                file_a,
+                Statement::ElementInstance(ElementInstance {
+                    device_letter: 'X',
+                    name: "X1".into(),
+                    nodes: vec![],
+                    raw_params: vec!["opamp".into()],
+                    subckt_name: Some("opamp".into()),
+                    span: 3..4,
+                }),
+            ),
+        ];
+        let tree = build_scope_tree_from_tagged(&tagged).unwrap();
+        let subckt_names: Vec<String> = collect_subckt_definitions(&tree)
+            .iter()
+            .filter_map(|s| s.name.clone())
+            .collect();
+        assert!(
+            subckt_names.contains(&"opamp".to_string()),
+            "opamp subckt from the included file must be present in the merged tree"
+        );
+        assert!(
+            tree.statements
+                .iter()
+                .any(|s| matches!(s, Statement::ElementInstance(ei) if ei.name == "X1")),
+            "X1 from the includer file must be present in the merged tree"
+        );
+    }
+
+    #[test]
+    #[ignore = "CORE-25 blocked: build_scope_tree_from_tagged() discards the FileId (`.map(|(_, s)| s.clone())`) before calling build_scope_tree(), so no Statement or downstream diagnostic in the resulting tree carries file identity at all. Cross-file *resolution* still works (see test_subckt_defined_in_included_file_resolves_from_includer), but 'diagnostics include file identity' is not implemented. See progress.core.yaml CORE-25 blocked note."]
+    fn test_duplicate_name_across_two_files_caught_with_both_file_locations() {
+        use crate::include::source_map::FileId;
+        use crate::symbols::uniqueness::check_unique_names;
+
+        let file_a = FileId::new_dummy();
+        let file_b = FileId::new_dummy();
+        let tagged = vec![
+            (file_a, make_subckt_stmt("dup", 1..2)),
+            (file_a, make_ends(Some("dup"), 2..3)),
+            (file_b, make_subckt_stmt("dup", 10..11)),
+            (file_b, make_ends(Some("dup"), 11..12)),
+        ];
+        let tree = build_scope_tree_from_tagged(&tagged).unwrap();
+        let diags = check_unique_names(&tree);
+        assert!(
+            !diags.is_empty(),
+            "expected a duplicate-name diagnostic for 'dup' defined in two files"
+        );
+        // The real requirement this epic promised: the diagnostic (or the
+        // tree) must let a caller tell the two definitions apart by FILE,
+        // not just by line span (spans 1..2 and 10..11 look like two
+        // places in ONE file with no FileId anywhere to disambiguate them).
+        // ScopeError/uniqueness diagnostics currently carry only a
+        // LineSpan, never a FileId — this assertion documents the gap.
+        panic!(
+            "no FileId is threaded through Statement/ScopeError, so there is no way to tell these two 'dup' definitions apart by file from the diagnostic alone"
+        );
+    }
 }

@@ -194,6 +194,51 @@ mod tests {
     }
 
     #[test]
+    fn test_subckt_default_gets_parsed_expr() {
+        let scope = Scope {
+            kind: scope::ScopeKind::TopLevel,
+            name: None,
+            depth: 0,
+            statements: vec![Statement::Subckt(Subckt {
+                name: "opamp".into(),
+                nodes: vec!["in".into(), "out".into()],
+                params: vec![("gain".into(), Some("10*2".into()))],
+                span: 1..2,
+            })],
+            children: vec![],
+            span: 0..1,
+        };
+        let results = wire_compiletime_expressions(&scope, Dialect::Ngspice);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_some());
+    }
+
+    #[test]
+    fn test_end_to_end_caret_lint_fires_on_real_parsed_param_text() {
+        use crate::expr::diagnostics::lint_caret_dialect_confusion;
+
+        let scope = Scope {
+            kind: scope::ScopeKind::TopLevel,
+            name: None,
+            depth: 0,
+            statements: vec![Statement::Param(Param {
+                assignments: vec![("z".into(), "a^b".into())],
+                span: 1..2,
+            })],
+            children: vec![],
+            span: 0..1,
+        };
+        let results = wire_compiletime_expressions(&scope, Dialect::Ngspice);
+        assert_eq!(results.len(), 1);
+        let expr = results[0].1.as_ref().expect("expected a parsed expr");
+        let diags = lint_caret_dialect_confusion(expr, Dialect::Ngspice);
+        assert!(
+            diags.iter().any(|d| d.message.contains("power")),
+            "expected the caret lint to fire on a real wired .param expression, got: {diags:?}"
+        );
+    }
+
+    #[test]
     fn test_one_bad_param_does_not_block_rest_of_document() {
         let scope = Scope {
             kind: scope::ScopeKind::TopLevel,
