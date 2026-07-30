@@ -1,0 +1,88 @@
+# Pre-commit hooks. Install once: `pre-commit install --install-hooks`
+# Then it runs automatically on every commit, and `pre-commit install --hook-type commit-msg`
+# enables the conventional-commits check on the commit message itself.
+#
+# To run all hooks manually across the repo:  pre-commit run --all-files
+#
+# Adapted from the general-simulator project's config — trimmed to what
+# applies here (no Python/ruff, no project-specific gotchas-index/invariants
+# checks). The cargo-fmt hook is a no-op until/unless the server ends up
+# written in Rust; harmless to keep either way (`types: [rust]` only fires
+# on staged .rs files).
+
+default_language_version:
+  python: python3
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  # -------------------------------------------------------------------------
+  # File hygiene — fast, language-agnostic checks.
+  # -------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$  # markdown uses trailing spaces for line breaks
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # -------------------------------------------------------------------------
+  # TS / JS / JSON — biome (local hook so the pinned version in package.json wins).
+  # -------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: biome-check
+        name: biome check
+        entry: pnpm exec biome check --write --no-errors-on-unmatched
+        language: system
+        types_or: [ts, tsx, javascript, jsx, json]
+        pass_filenames: true
+
+  # -------------------------------------------------------------------------
+  # Rust — cargo fmt, only relevant if/once a server package is written in Rust.
+  # -------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'for f in $(find . -maxdepth 3 -name Cargo.toml -not -path "*/target/*"); do cargo fmt --manifest-path "$f" --check || exit 1; done'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # -------------------------------------------------------------------------
+  # Conventional commits — validates the commit message on the commit-msg stage.
+  # Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+  # Examples:  feat(server): add .subckt symbol resolution
+  #            fix(extension): correct hover range for behavioral sources
+  #            chore: bump biome to 2.0
+  # -------------------------------------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - "--strict"
+          - "feat"
+          - "fix"
+          - "docs"
+          - "style"
+          - "refactor"
+          - "perf"
+          - "test"
+          - "build"
+          - "ci"
+          - "chore"
+          - "revert"
