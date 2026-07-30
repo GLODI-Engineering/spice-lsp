@@ -9,10 +9,12 @@ Thumbs.db
 
 # Node / TS
 node_modules/
+.pnpm-store/
 dist/
 out/
 *.tsbuildinfo
 npm-debug.log*
+*.vsix
 
 # Python
 __pycache__/
