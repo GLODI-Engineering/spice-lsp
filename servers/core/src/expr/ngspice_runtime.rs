@@ -285,6 +285,50 @@ pub fn parse_ngspice_runtime(input: &str) -> Result<Expr> {
     Parser::new(tokens).expr_bp(0)
 }
 
+const RUNTIME_BUILTINS: &[&str] = &[
+    "SQRT",
+    "SIN",
+    "COS",
+    "TAN",
+    "ASIN",
+    "ACOS",
+    "ATAN",
+    "SINH",
+    "COSH",
+    "ASINH",
+    "ACOSH",
+    "ATANH",
+    "ARCTAN",
+    "EXP",
+    "LN",
+    "LOG",
+    "LOG10",
+    "ABS",
+    "NINT",
+    "INT",
+    "FLOOR",
+    "CEIL",
+    "MIN",
+    "MAX",
+    "SGN",
+    "TERNARY_FCN",
+    "POW",
+    "PWR",
+    "U",
+    "U2",
+    "URAMP",
+    "PWL",
+    "GAUSS",
+    "AGAUSS",
+    "UNIF",
+    "AUNIF",
+    "LIMIT",
+];
+
+pub fn is_builtin(name: &str) -> bool {
+    RUNTIME_BUILTINS.contains(&name.to_uppercase().as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

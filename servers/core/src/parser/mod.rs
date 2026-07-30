@@ -13,6 +13,9 @@ pub struct ParseError {
 
 pub type ParseResult = Result<Statement, ParseError>;
 
+pub type NodeParamsResult =
+    std::result::Result<(Vec<String>, Vec<String>, Option<String>), ParseError>;
+
 pub fn parse(lines: &[ProcessedLine], dialect: Dialect) -> Vec<ParseResult> {
     match dialect {
         Dialect::Ngspice => ngspice::parse(lines),

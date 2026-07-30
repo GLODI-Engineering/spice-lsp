@@ -8,6 +8,7 @@ pub struct ElementInstance {
     pub name: String,
     pub nodes: Vec<String>,
     pub raw_params: Vec<String>,
+    pub subckt_name: Option<String>,
     pub span: LineSpan,
 }
 
@@ -67,6 +68,7 @@ mod tests {
             name: "R1".to_string(),
             nodes: vec!["1".to_string(), "2".to_string()],
             raw_params: vec!["100".to_string(), "tc1=0.001".to_string()],
+            subckt_name: None,
             span: 1..2,
         };
         assert_eq!(ei.device_letter, 'R');
@@ -85,6 +87,7 @@ mod tests {
             name: "C1".into(),
             nodes: vec!["3".into(), "0".into()],
             raw_params: vec!["1u".into()],
+            subckt_name: None,
             span: span.clone(),
         });
         match &s {
