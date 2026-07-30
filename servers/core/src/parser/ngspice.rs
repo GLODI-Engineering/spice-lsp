@@ -45,15 +45,142 @@ fn parse_dot_command(line: &str, span: LineSpan) -> ParseResult {
         parse_model(line, span)
     } else if upper.starts_with(".PARAM") {
         parse_param(line, span)
+    } else if upper.starts_with(".GLOBAL_PARAM") {
+        parse_global_param(line, span)
+    } else if upper.starts_with(".GLOBAL") {
+        parse_global(line, span)
+    } else if upper.starts_with(".IC") {
+        parse_ic(line, span)
+    } else if upper.starts_with(".NODESET") {
+        parse_nodeset(line, span)
+    } else if upper.starts_with(".TEMP") {
+        parse_temp(line, span)
+    } else if upper.starts_with(".CSPARAM") {
+        parse_csparam(line, span)
+    } else if upper.starts_with(".OPTIONS") {
+        parse_options_ngspice(line, span)
     } else if upper.starts_with(".FUNC") {
         parse_func(line, span)
     } else if upper.starts_with(".INCLUDE") || upper.starts_with(".INC") {
         parse_include(line, span)
     } else if upper.starts_with(".LIB") {
         parse_lib(line, span)
+    } else if upper.starts_with(".AC") {
+        Ok(Statement::Ac(rest_after(".AC", line), span))
+    } else if upper.starts_with(".DC") {
+        Ok(Statement::Dc(rest_after(".DC", line), span))
+    } else if upper.starts_with(".OP") {
+        Ok(Statement::Op(span))
+    } else if upper.starts_with(".TRAN") {
+        Ok(Statement::Tran(rest_after(".TRAN", line), span))
+    } else if is_ngspice_analysis(&upper) {
+        Ok(Statement::Analysis {
+            keyword: first_word(&upper),
+            dialect_tag: Some("ngspice".into()),
+            raw_args: rest_after(&first_word(&upper), line),
+            span,
+        })
     } else {
         Ok(Statement::Unrecognized(line.to_string(), span))
     }
+}
+
+fn rest_after(keyword: &str, line: &str) -> String {
+    if line.len() > keyword.len() {
+        line[keyword.len()..].trim().to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn first_word(s: &str) -> String {
+    s.split_whitespace().next().unwrap_or("").to_string()
+}
+
+fn is_ngspice_analysis(upper: &str) -> bool {
+    let kw = upper.split_whitespace().next().unwrap_or("");
+    matches!(
+        kw,
+        ".DISTO"
+            | ".NOISE"
+            | ".PZ"
+            | ".SENS"
+            | ".SP"
+            | ".FOUR"
+            | ".PROBE"
+            | ".WIDTH"
+            | ".MEASURE"
+            | ".MEAS"
+    )
+}
+
+fn parse_global(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".global".len()..].trim();
+    let nodes: Vec<String> = rest.split_whitespace().map(|s| s.to_string()).collect();
+    Ok(Statement::Global(nodes, span))
+}
+
+fn parse_ic(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".ic".len()..].trim();
+    let assignments = parse_param_assignments(rest);
+    Ok(Statement::Ic(assignments, span))
+}
+
+fn parse_nodeset(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".nodeset".len()..].trim();
+    if rest.to_uppercase().starts_with("ALL=") {
+        Ok(Statement::NodesetAll(
+            rest["ALL=".len()..].to_string(),
+            span,
+        ))
+    } else {
+        let assignments = parse_param_assignments(rest);
+        Ok(Statement::Nodeset(assignments, span))
+    }
+}
+
+fn parse_temp(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".temp".len()..].trim();
+    Ok(Statement::Temp(rest.to_string(), span))
+}
+
+fn parse_csparam(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".csparam".len()..].trim();
+    let assignments = parse_param_assignments(rest);
+    Ok(Statement::Csparam(assignments, span))
+}
+
+fn parse_global_param(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".global_param".len()..].trim();
+    let assignments = parse_param_assignments(rest);
+    Ok(Statement::GlobalParam(Param {
+        assignments,
+        span: span.clone(),
+    }))
+}
+
+fn parse_options_ngspice(line: &str, span: LineSpan) -> ParseResult {
+    let rest = line[".options".len()..].trim();
+    let assignments = parse_option_assignments(rest);
+    Ok(Statement::Options {
+        package: None,
+        assignments,
+        span,
+    })
+}
+
+fn parse_option_assignments(text: &str) -> Vec<(String, Option<String>)> {
+    let mut result = Vec::new();
+    for token in text.split_whitespace() {
+        if let Some(eq_pos) = token.find('=') {
+            let name = token[..eq_pos].to_string();
+            let val = token[eq_pos + 1..].to_string();
+            result.push((name, Some(val)));
+        } else {
+            result.push((token.to_string(), None));
+        }
+    }
+    result
 }
 
 fn parse_element(line: &str, span: LineSpan) -> ParseResult {
