@@ -1078,4 +1078,148 @@ mod tests {
         let s = ok_statements(parsed(".unknown_directive foo bar\n"));
         assert!(matches!(s[0], Statement::Unrecognized(_, _)));
     }
+
+    // --- CORE-28: .GLOBAL/.IC/.NODESET/.TEMP/.CSPARAM ---
+
+    #[test]
+    fn test_global_multiple_nodes() {
+        let s = ok_statements(parsed(".global vdd vss\n"));
+        assert_eq!(
+            s[0],
+            Statement::Global(vec!["vdd".into(), "vss".into()], 1..2)
+        );
+    }
+
+    #[test]
+    fn test_ic_multiple_assignments() {
+        let s = ok_statements(parsed(".ic v(1)=5 v(2)=0\n"));
+        match &s[0] {
+            Statement::Ic(assignments, _) => {
+                assert_eq!(assignments.len(), 2);
+            }
+            other => panic!("expected Ic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_nodeset_multiple_assignments() {
+        let s = ok_statements(parsed(".nodeset v(3)=1.2\n"));
+        assert!(matches!(s[0], Statement::Nodeset(_, _)));
+    }
+
+    #[test]
+    fn test_nodeset_all_equals_value() {
+        let s = ok_statements(parsed(".nodeset all=0\n"));
+        assert_eq!(s[0], Statement::NodesetAll("0".into(), 1..2));
+    }
+
+    #[test]
+    fn test_temp_single_value() {
+        let s = ok_statements(parsed(".temp 27\n"));
+        assert_eq!(s[0], Statement::Temp("27".into(), 1..2));
+    }
+
+    #[test]
+    fn test_csparam_ngspice_no_diagnostic() {
+        let results = parsed(".csparam x=5\n");
+        assert!(results[0].is_ok());
+        assert!(matches!(results[0], Ok(Statement::Csparam(_, _))));
+    }
+
+    // --- CORE-29: .OPTIONS ---
+
+    #[test]
+    fn test_ngspice_options_flat_namespace_bare_and_valued_flags() {
+        let s = ok_statements(parsed(".options reltol=1e-3 acct\n"));
+        match &s[0] {
+            Statement::Options {
+                package,
+                assignments,
+                ..
+            } => {
+                assert_eq!(*package, None);
+                assert_eq!(assignments.len(), 2);
+            }
+            other => panic!("expected Options, got {other:?}"),
+        }
+    }
+
+    // --- CORE-30: common analysis statements ---
+
+    #[test]
+    fn test_ac_dec_form() {
+        let s = ok_statements(parsed(".ac dec 10 1 1meg\n"));
+        assert_eq!(s[0], Statement::Ac("dec 10 1 1meg".into(), 1..2));
+    }
+
+    #[test]
+    fn test_dc_single_sweep() {
+        let s = ok_statements(parsed(".dc V1 0 5 0.1\n"));
+        assert_eq!(s[0], Statement::Dc("V1 0 5 0.1".into(), 1..2));
+    }
+
+    #[test]
+    fn test_dc_nested_sweep() {
+        let s = ok_statements(parsed(".dc V1 0 5 1 V2 0 1 0.5\n"));
+        assert_eq!(s[0], Statement::Dc("V1 0 5 1 V2 0 1 0.5".into(), 1..2));
+    }
+
+    #[test]
+    fn test_op_no_args() {
+        let s = ok_statements(parsed(".op\n"));
+        assert_eq!(s[0], Statement::Op(1..2));
+    }
+
+    #[test]
+    fn test_tran_basic_form() {
+        let s = ok_statements(parsed(".tran 1n 100n\n"));
+        assert_eq!(s[0], Statement::Tran("1n 100n".into(), 1..2));
+    }
+
+    #[test]
+    fn test_tran_with_uic() {
+        let s = ok_statements(parsed(".tran 1n 100n uic\n"));
+        assert_eq!(s[0], Statement::Tran("1n 100n uic".into(), 1..2));
+    }
+
+    // --- CORE-31: dialect-specific analysis/output statements ---
+
+    #[test]
+    fn test_ngspice_only_disto_recognized() {
+        let s = ok_statements(parsed(".disto dec 10 1k 100k\n"));
+        assert!(matches!(s[0], Statement::Analysis { .. }));
+    }
+
+    #[test]
+    fn test_ngspice_only_pz_recognized() {
+        let s = ok_statements(parsed(".pz 1 2 3 4 cur pol\n"));
+        assert!(matches!(s[0], Statement::Analysis { .. }));
+    }
+
+    #[test]
+    #[ignore = "CORE-31 blocked: is_ngspice_analysis() has no Xyce-only-keyword check at all, so .STEP/.HB/etc fall through to Unrecognized under ngspice with zero explanation instead of a 'this is Xyce-only' diagnostic. See progress.core.yaml CORE-31 blocked note."]
+    fn test_xyce_only_keyword_flagged_under_ngspice() {
+        // .STEP is Xyce-only per docs/GRAMMAR.md §7 — ngspice has no native
+        // .STEP (emulated via .control+alter+run). It must not be silently
+        // accepted as a recognized Analysis statement here.
+        let results = parsed(".step Vin 0 5 1\n");
+        match &results[0] {
+            Ok(Statement::Analysis { .. }) => {
+                panic!(".STEP was silently accepted under ngspice as a recognized Analysis statement, but it is Xyce-only per docs/GRAMMAR.md §7")
+            }
+            Ok(Statement::Unrecognized(_, _)) => {
+                panic!(".STEP fell through to Unrecognized under ngspice with no diagnostic explaining it is Xyce-only")
+            }
+            Ok(other) => panic!("unexpected: {other:?}"),
+            Err(_) => {} // acceptable: rejected with a diagnostic
+        }
+    }
+
+    #[test]
+    fn test_measure_both_spellings_captured_as_raw_statement() {
+        let s1 = ok_statements(parsed(".measure tran vout1 max v(1)\n"));
+        let s2 = ok_statements(parsed(".meas tran vout1 max v(1)\n"));
+        assert!(matches!(s1[0], Statement::Analysis { .. }));
+        assert!(matches!(s2[0], Statement::Analysis { .. }));
+    }
 }

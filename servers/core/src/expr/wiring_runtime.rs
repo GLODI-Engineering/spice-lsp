@@ -168,4 +168,36 @@ mod tests {
         let results = wire_runtime_expressions(&scope, Dialect::Ngspice);
         assert!(results.is_empty());
     }
+
+    #[test]
+    #[ignore = "CORE-27 blocked: wire_runtime_in_scope() only looks for V=/I=/R=/C=/L=/Q=-prefixed raw_params entries; a TABLE {expr} = (...) or POLY(N) ... form on an E/F/G/H instance is not recognized by any prefix check, so it produces zero wired expressions instead of being routed to CORE-12 (Xyce) or CORE-11 (ngspice). See progress.core.yaml CORE-27 blocked note."]
+    fn test_e_source_table_form_produces_wired_expression() {
+        // Xyce-style: ET2 2 0 TABLE {V(ANODE,CATHODE)} = (0,0) (30,1)
+        let scope = Scope {
+            kind: scope::ScopeKind::TopLevel,
+            name: None,
+            depth: 0,
+            statements: vec![Statement::ElementInstance(ElementInstance {
+                device_letter: 'E',
+                name: "ET2".into(),
+                nodes: vec!["2".into(), "0".into()],
+                raw_params: vec![
+                    "TABLE".into(),
+                    "{V(ANODE,CATHODE)}".into(),
+                    "=".into(),
+                    "(0,0)".into(),
+                    "(30,1)".into(),
+                ],
+                subckt_name: None,
+                span: 1..2,
+            })],
+            children: vec![],
+            span: 0..1,
+        };
+        let results = wire_runtime_expressions(&scope, Dialect::Xyce);
+        assert!(
+            !results.is_empty(),
+            "TABLE-form E-source should produce at least one wired expression"
+        );
+    }
 }

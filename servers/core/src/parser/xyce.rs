@@ -964,4 +964,174 @@ mod tests {
             Statement::Lib("./libs.lib".into(), Some("typical".into()), 1..2)
         );
     }
+
+    // --- CORE-28: .GLOBAL/.IC/.NODESET/.TEMP/.CSPARAM ---
+
+    #[test]
+    fn test_global_multiple_nodes() {
+        let s = ok_statements(parsed(".global vdd vss\n"));
+        assert_eq!(
+            s[0],
+            Statement::Global(vec!["vdd".into(), "vss".into()], 1..2)
+        );
+    }
+
+    #[test]
+    fn test_ic_multiple_assignments() {
+        let s = ok_statements(parsed(".ic v(1)=5 v(2)=0\n"));
+        match &s[0] {
+            Statement::Ic(assignments, _) => assert_eq!(assignments.len(), 2),
+            other => panic!("expected Ic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_nodeset_all_equals_value_xyce() {
+        // docs/GRAMMAR.md doesn't confirm Xyce supports the ngspice
+        // `.nodeset all=value` special form — expect it to still parse
+        // structurally but carry an "unconfirmed for Xyce" note rather
+        // than either silently accepting or hard-rejecting it.
+        let s = ok_statements(parsed(".nodeset all=0\n"));
+        assert!(matches!(
+            s[0],
+            Statement::NodesetAll(_, _) | Statement::Unrecognized(_, _)
+        ));
+    }
+
+    #[test]
+    fn test_temp_single_value() {
+        let s = ok_statements(parsed(".temp 27\n"));
+        assert_eq!(s[0], Statement::Temp("27".into(), 1..2));
+    }
+
+    #[test]
+    fn test_csparam_xyce_info_diagnostic() {
+        let s = ok_statements(parsed(".csparam x=5\n"));
+        match &s[0] {
+            Statement::CsparamInfo(note, _) => {
+                assert!(note.to_lowercase().contains("ngspice"));
+            }
+            other => panic!("expected CsparamInfo, got {other:?}"),
+        }
+    }
+
+    // --- CORE-29: .OPTIONS ---
+
+    #[test]
+    fn test_xyce_options_requires_package_keyword() {
+        let s = ok_statements(parsed(".options device tnom=27\n"));
+        match &s[0] {
+            Statement::Options { package, .. } => {
+                assert_eq!(
+                    package.as_deref().map(|p| p.to_uppercase()),
+                    Some("DEVICE".to_string())
+                );
+            }
+            other => panic!("expected Options, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_xyce_options_missing_package_keyword_flagged() {
+        let results = parsed(".options reltol=1e-3\n");
+        assert!(
+            results[0].is_err(),
+            "Xyce .options with no package keyword should be flagged, got {:?}",
+            results[0]
+        );
+    }
+
+    #[test]
+    fn test_xyce_options_inside_subckt_flagged_top_level_only() {
+        let src = ".subckt block a b\n.options device tnom=27\n.ends\n";
+        let results = parsed(src);
+        assert!(results[1].is_err());
+    }
+
+    #[test]
+    fn test_xyce_options_at_top_level_is_ok() {
+        let results = parsed(".options device tnom=27\n");
+        assert!(results[0].is_ok());
+    }
+
+    // --- CORE-30: common analysis statements ---
+
+    #[test]
+    fn test_ac_dec_form() {
+        let s = ok_statements(parsed(".ac dec 10 1 1meg\n"));
+        assert_eq!(s[0], Statement::Ac("dec 10 1 1meg".into(), 1..2));
+    }
+
+    #[test]
+    fn test_dc_single_sweep() {
+        let s = ok_statements(parsed(".dc V1 0 5 0.1\n"));
+        assert_eq!(s[0], Statement::Dc("V1 0 5 0.1".into(), 1..2));
+    }
+
+    #[test]
+    fn test_op_no_args() {
+        let s = ok_statements(parsed(".op\n"));
+        assert_eq!(s[0], Statement::Op(1..2));
+    }
+
+    #[test]
+    fn test_tran_basic_form() {
+        let s = ok_statements(parsed(".tran 1n 100n\n"));
+        assert_eq!(s[0], Statement::Tran("1n 100n".into(), 1..2));
+    }
+
+    // --- CORE-31: dialect-specific analysis/output statements ---
+
+    #[test]
+    fn test_xyce_only_step_recognized() {
+        let s = ok_statements(parsed(".step Vin 0 5 1\n"));
+        assert!(matches!(s[0], Statement::Analysis { .. }));
+    }
+
+    #[test]
+    fn test_xyce_only_hb_recognized() {
+        let s = ok_statements(parsed(".hb 1meg\n"));
+        assert!(matches!(s[0], Statement::Analysis { .. }));
+    }
+
+    #[test]
+    #[ignore = "CORE-31 blocked: is_xyce_analysis() merges ngspice-only keywords (.PZ, .DISTO, .NOISE, .SP, .FOUR, .PROBE, .WIDTH) into its accepted-under-Xyce set with no diagnostic, silently treating them as valid Xyce statements. See progress.core.yaml CORE-31 blocked note."]
+    fn test_ngspice_only_keyword_flagged_under_xyce() {
+        // .PZ is ngspice-only per docs/GRAMMAR.md §7 — must not be
+        // silently accepted as a recognized Xyce Analysis statement.
+        let results = parsed(".pz 1 2 3 4 cur pol\n");
+        match &results[0] {
+            Ok(Statement::Analysis { dialect_tag, .. })
+                if dialect_tag.as_deref() == Some("xyce") =>
+            {
+                panic!(".PZ was silently accepted under Xyce as a recognized Analysis statement, but it is ngspice-only per docs/GRAMMAR.md §7")
+            }
+            Ok(other) => panic!("unexpected: {other:?}"),
+            Err(_) => {} // acceptable: rejected with a diagnostic
+        }
+    }
+
+    #[test]
+    fn test_data_enddata_block_bounded_correctly() {
+        let src = ".data sweeptable\n+ v1 v2\n+ 1 2\n+ 3 4\n.enddata\nR1 1 2 100\n";
+        let results = parsed(src);
+        // Whatever shape is chosen for the DATA block, the R1 line after
+        // .ENDDATA must still parse as an ordinary element, not get
+        // swallowed into (or corrupted by) the data-block handling.
+        let has_r1 = results
+            .iter()
+            .any(|r| matches!(r, Ok(Statement::ElementInstance(ei)) if ei.name == "R1"));
+        assert!(
+            has_r1,
+            "R1 after .ENDDATA was not parsed correctly: {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_measure_both_spellings_captured_as_raw_statement() {
+        let s1 = ok_statements(parsed(".measure tran vout1 max v(1)\n"));
+        let s2 = ok_statements(parsed(".meas tran vout1 max v(1)\n"));
+        assert!(matches!(s1[0], Statement::Analysis { .. }));
+        assert!(matches!(s2[0], Statement::Analysis { .. }));
+    }
 }
