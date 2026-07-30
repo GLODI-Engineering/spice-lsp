@@ -55,6 +55,28 @@ pub enum Statement {
     Lib(String, Option<String>, LineSpan),
     Comment(LineSpan),
     Unrecognized(String, LineSpan),
+    Global(Vec<String>, LineSpan),
+    Ic(Vec<(String, String)>, LineSpan),
+    Nodeset(Vec<(String, String)>, LineSpan),
+    NodesetAll(String, LineSpan),
+    Temp(String, LineSpan),
+    Csparam(Vec<(String, String)>, LineSpan),
+    Options {
+        package: Option<String>,
+        assignments: Vec<(String, Option<String>)>,
+        span: LineSpan,
+    },
+    CsparamInfo(String, LineSpan),
+    Ac(String, LineSpan),
+    Dc(String, LineSpan),
+    Op(LineSpan),
+    Tran(String, LineSpan),
+    Analysis {
+        keyword: String,
+        dialect_tag: Option<String>,
+        raw_args: String,
+        span: LineSpan,
+    },
 }
 
 #[cfg(test)]
