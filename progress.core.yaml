@@ -1100,7 +1100,16 @@ epics:
   - id: CORE-21
     title: File search-path resolution for .include/.lib
     area: multifile-path-resolution
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/include/resolve.rs tests pass
+      (already existed and were correct). FakeFileSystem-backed tests
+      confirm ngspice's including-file-relative resolution and Xyce's
+      3-tier order (including file → top-level netlist dir → exec dir),
+      quoted-filename stripping, and the tried-locations-listed diagnostic
+      on failure. Gate: cargo fmt clean, cargo clippy -D warnings clean,
+      347/347 cargo test pass (full workspace, 4 known-blocked regressions
+      intentionally ignored — see CORE-25/27/31).
     depends_on: [CORE-05, CORE-07]
     summary: >
       Implement the per-dialect search-path resolution rules from docs/
@@ -1140,7 +1149,14 @@ epics:
   - id: CORE-22
     title: .lib section extraction
     area: multifile-lib-sections
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/include/lib_sections.rs tests
+      pass (already existed and were correct). Section extraction, sibling-
+      section isolation, unknown-section/unterminated-section diagnostics,
+      no-section-argument whole-file fallback, and case-insensitive section
+      matching all verified. Gate: cargo fmt clean, cargo clippy -D
+      warnings clean, 347/347 cargo test pass.
     depends_on: [CORE-21]
     summary: >
       Implement `.LIB <section> ... .ENDL <section>` section splitting for
@@ -1178,7 +1194,17 @@ epics:
   - id: CORE-23
     title: Multi-file source-span / provenance model
     area: multifile-provenance
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/include/source_map.rs tests
+      pass (already existed and were correct). FileId/SourceMap
+      registration is idempotent per canonicalized path, FileSpan carries
+      both file identity and a LineSpan. Note (relevant to CORE-25): this
+      foundation is correct and complete in isolation, but CORE-25 does not
+      actually thread it through the scope-tree/diagnostic pipeline — see
+      CORE-25's blocked note. That gap belongs to CORE-25, not this epic.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 347/347 cargo
+      test pass.
     depends_on: [CORE-02]
     summary: >
       Introduce a `FileId`/source-map abstraction so a `Statement`'s
@@ -1211,7 +1237,16 @@ epics:
   - id: CORE-24
     title: Include-graph builder + circular-include detection
     area: multifile-include-graph
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/include/graph.rs — 4 tests
+      already existed and passed; I added the 3 missing acceptance-bullet
+      tests (nested transitive includes, .lib section resolution actually
+      wired through resolve_includes(), unresolvable-section diagnostic).
+      All 7 pass. Direct self-include and transitive A→B→C→A cycles both
+      detected without hanging; missing includes are flagged and the rest
+      of the document still resolves. Gate: cargo fmt clean, cargo clippy
+      -D warnings clean, 347/347 cargo test pass.
     depends_on: [CORE-21, CORE-22, CORE-23]
     summary: >
       Implement the top-level multi-file resolution entry point: starting
@@ -1254,7 +1289,28 @@ epics:
   - id: CORE-25
     title: Wire multi-file statements into symbol resolution
     area: multifile-symbol-integration
-    status: planned
+    status: blocked
+    blocked: >
+      2026-07-31. build_scope_tree_from_tagged() in
+      servers/core/src/symbols/scope.rs (line ~92) accepts
+      `&[(FileId, Statement)]` but immediately does
+      `.map(|(_, s)| s.clone())` — discarding every FileId before calling
+      the single-file build_scope_tree(). Confirmed via a real test:
+      test_subckt_defined_in_included_file_resolves_from_includer PASSES
+      (cross-file .subckt resolution genuinely works, since by the time
+      it's merged it behaves like one big file), but
+      test_duplicate_name_across_two_files_caught_with_both_file_locations
+      (added, marked #[ignore] with this note) FAILS — there is no FileId
+      anywhere in Statement, ScopeError, or the uniqueness/subckt/model
+      diagnostic types, so no diagnostic can report which file an offending
+      statement came from. The epic's core promise ("diagnostics carry
+      file identity") is unmet. Fix needs: either (a) thread FileId through
+      Statement (a real AST shape change touching CORE-02/05/07's output),
+      or (b) keep a side-table mapping LineSpan-plus-statement-identity
+      back to FileId and have each symbols::* diagnostic type look it up.
+      Option (b) avoids re-touching the already-complete CORE-02/05/07
+      contracts but needs a stable way to correlate a Statement back to its
+      origin after cloning — worth deciding deliberately, not just patching.
     depends_on: [CORE-24, CORE-20]
     summary: >
       Retrofit CORE-14's scope-tree builder (and by extension CORE-15
@@ -1293,7 +1349,17 @@ epics:
   - id: CORE-26
     title: Wire compile-time expression parsing onto .param/.func/.model/subckt-default text
     area: expr-wiring-compiletime
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/wiring_compiletime.rs — 6
+      tests already existed and passed; I added the 2 missing ones (subckt
+      formal-param defaults get parsed, and an end-to-end proof that
+      CORE-13's lint_caret_dialect_confusion fires on an Expr produced from
+      real parsed `.param z=a^b` text, not just a hand-built fixture). Both
+      pass. Brace-expression .model params are parsed; plain numeric .model
+      params are correctly left alone; one bad .param doesn't block the
+      rest of the document. Gate: cargo fmt clean, cargo clippy -D warnings
+      clean, 347/347 cargo test pass.
     depends_on: [CORE-09, CORE-10, CORE-14]
     summary: >
       Close a gap identified while testing CORE-14..20: those epics track
@@ -1334,7 +1400,27 @@ epics:
   - id: CORE-27
     title: Wire runtime expression parsing onto B/E/G-source and behavioral R/L/C text
     area: expr-wiring-runtime
-    status: planned
+    status: blocked
+    blocked: >
+      2026-07-31. wire_runtime_in_scope() in
+      servers/core/src/expr/wiring_runtime.rs only strips
+      V=/I= (B/E/G/F/H letters) and R=/C=/L=/Q= (R/C/L letters) prefixes
+      off raw_params entries. It has no handling at all for the
+      `TABLE {expr} = (...)` or `POLY(N) ...` forms on E/F/G/H sources —
+      confirmed with a probe test (now a permanent #[ignore]d regression,
+      test_e_source_table_form_produces_wired_expression): an
+      `ET2 2 0 TABLE {V(ANODE,CATHODE)} = (0,0) (30,1)` instance produces
+      ZERO wired expressions, not a routing to CORE-12 (Xyce) or a plain
+      CORE-11 parse (ngspice) as the epic's acceptance criteria required.
+      B-source V=/I= wiring, behavioral R=/C=/L= wiring, and the
+      plain-passive-device-untouched behavior all DO work correctly (their
+      tests pass) — only the TABLE/POLY routing bullet is unmet. Fix needs:
+      recognize `raw_params` sequences starting with the literal tokens
+      "TABLE"/"POLY(...)" (these arrive as multiple whitespace-split tokens
+      per CORE-04/06's element parser, not one glued string — see how
+      CORE-12's xyce_sources.rs already parses a joined TABLE string, to
+      decide whether wiring should re-join raw_params before calling it or
+      whether xyce_sources needs a token-slice-based entry point instead).
     depends_on: [CORE-11, CORE-12, CORE-14]
     summary: >
       The runtime-grammar counterpart to CORE-26: for every `B`/`E`/`G`
@@ -1371,7 +1457,17 @@ epics:
   - id: CORE-28
     title: Parse .GLOBAL / .IC / .NODESET / .TEMP / .CSPARAM statements
     area: statements-misc-common
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. Zero tests existed against this epic's
+      acceptance list; added a full batch to both parser::ngspice and
+      parser::xyce test modules and all pass. .GLOBAL/.IC/.NODESET/.TEMP
+      parse for both dialects; `.NODESET all=value` parses under ngspice
+      and structurally parses (or is Unrecognized, both acceptable per the
+      epic's own "unconfirmed for Xyce" framing) under Xyce; .CSPARAM
+      parses cleanly under ngspice and produces the documented
+      CsparamInfo("ngspice-only extension") note under Xyce. Gate: cargo
+      fmt clean, cargo clippy -D warnings clean, 347/347 cargo test pass.
     depends_on: [CORE-05, CORE-07]
     summary: >
       Extend the `Statement` enum and both dialect parsers to recognize
@@ -1416,7 +1512,18 @@ epics:
   - id: CORE-29
     title: Parse .OPTIONS (dialect-divergent shape)
     area: statements-options
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. Added the missing test batch. ngspice's flat
+      `.options opt=val bareflag` namespace parses with package: None;
+      Xyce's `.options DEVICE ...` requires and captures the package
+      keyword (case as originally typed — the test now checks
+      case-insensitively, not forcing the implementation to normalize
+      case, which was my own test's overreach, not a defect); a Xyce
+      `.options` with no package keyword is rejected; a Xyce `.options`
+      inside a `.subckt` is rejected as top-level-only, reusing CORE-07's
+      subckt_depth mechanism. Gate: cargo fmt clean, cargo clippy -D
+      warnings clean, 347/347 cargo test pass.
     depends_on: [CORE-05, CORE-07]
     summary: >
       Extend the `Statement` enum and both dialect parsers to recognize
@@ -1458,7 +1565,18 @@ epics:
   - id: CORE-30
     title: Parse common analysis statements (.AC/.DC/.TRAN/.OP)
     area: statements-analysis-common
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. Added the missing test batch (dec-form .AC,
+      single and nested-sweep .DC, no-arg .OP, .TRAN with and without
+      UIC) for both dialects — all pass. Raw-argument capture confirmed
+      (no premature semantic parsing of sweep bounds, consistent with the
+      .model raw_params precedent). The confirmed .TRAN first-argument
+      semantic divergence (print-interval vs. initial-timestep) is
+      structural-capture-only in this epic as scoped — no hover feature
+      consumes it yet, that's follow-on work, not a gap in this epic's own
+      acceptance criteria. Gate: cargo fmt clean, cargo clippy -D warnings
+      clean, 347/347 cargo test pass.
     depends_on: [CORE-05, CORE-07]
     summary: >
       Extend the `Statement` enum and both dialect parsers to recognize the
@@ -1499,7 +1617,34 @@ epics:
   - id: CORE-31
     title: Parse dialect-specific analysis/output statements
     area: statements-analysis-dialect-specific
-    status: planned
+    status: blocked
+    blocked: >
+      2026-07-31. Zero tests existed; added a full batch. Recognition of
+      every listed keyword under its OWN dialect works correctly (.DISTO/
+      .PZ/etc under ngspice; .STEP/.HB/etc under Xyce; .DATA/.ENDDATA
+      bounded block; .MEASURE and .MEAS both spellings, both dialects) —
+      all pass. But the two explicit cross-dialect-flagging acceptance
+      bullets are both violated, confirmed by two permanent
+      #[ignore]d regression tests:
+      (1) servers/core/src/parser/xyce.rs is_xyce_analysis() (~line 117)
+      merges the ngspice-only keyword list (.DISTO/.NOISE/.PZ/.SP/.FOUR/
+      .PROBE/.WIDTH) directly into its own accepted-set with no diagnostic
+      — a `.PZ` line under Dialect::Xyce is silently accepted as a valid
+      Statement::Analysis{dialect_tag: "xyce"}, never flagged as
+      ngspice-only. Test: parser::xyce::tests::
+      test_ngspice_only_keyword_flagged_under_xyce.
+      (2) servers/core/src/parser/ngspice.rs is_ngspice_analysis() (~line
+      100) has NO Xyce-only-keyword list at all — a `.STEP` line under
+      Dialect::Ngspice falls straight through to Statement::Unrecognized
+      with zero explanation that it's Xyce-only (the "ngspice has no
+      native .STEP" fact from docs/GRAMMAR.md §7 is not surfaced anywhere).
+      Test: parser::ngspice::tests::
+      test_xyce_only_keyword_flagged_under_ngspice.
+      Fix needs: split is_xyce_analysis()'s keyword list into a
+      Xyce-native set and a separate "known ngspice-only, reject with a
+      named diagnostic" set (same shape needed in reverse for
+      is_ngspice_analysis() plus a genuinely-new Xyce-only-keyword list it
+      currently lacks entirely).
     depends_on: [CORE-30]
     summary: >
       Extend the `Statement` enum and both dialect parsers with the
