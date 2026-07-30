@@ -43,7 +43,14 @@ epics:
   - id: CORE-01
     title: Line preprocessing (comments, continuation)
     area: lexical-rules
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. All 16 lexer tests in servers/core/src/lexer.rs
+      pass, including the ngspice $/// vs Xyce ;-only EOL comment split, the
+      +-continuation and ngspice-only backslash-continuation forms, the
+      .title/.lib/.include continuation exceptions, and source-line-span
+      tracking through multi-line joins. Gate: cargo fmt clean, cargo clippy
+      -D warnings clean (workspace), 90/90 cargo test pass (full suite).
     depends_on: []
     summary: >
       Implement the dialect-parameterized line-preprocessing pass described
@@ -86,7 +93,14 @@ epics:
   - id: CORE-02
     title: Common-core AST types
     area: common-ast
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. All 3 AST tests in servers/core/src/ast.rs pass.
+      Statement enum covers ElementInstance/Subckt/Ends/Model/Param/
+      GlobalParam/Func/Include/Lib/Comment/Unrecognized, every variant
+      carries a LineSpan, Unrecognized preserves raw text, and no variant
+      references Dialect directly — architecture invariant holds. Gate:
+      cargo fmt clean, cargo clippy -D warnings clean, 90/90 cargo test pass.
     depends_on: []
     summary: >
       Define the dialect-agnostic AST types shared by both dialects, per
@@ -119,7 +133,17 @@ epics:
   - id: CORE-03
     title: Dialect overlay trait + device-letter table
     area: dialect-overlay
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. All 4 dialect tests in servers/core/src/dialect.rs
+      pass. Dialect::resolve_device_letter() confirms the P collision
+      (CoupledMulticonductorLine vs PortDevice) and U collision
+      (UniformRCLine vs BehavioralDigital) resolve differently per dialect;
+      unknown letters return None, not a panic; common letters (R,C,L,K,V,
+      I,D,Q,J,Z,M,E,G,F,H,B,S,W,T,X,O) agree across dialects. Table is
+      per-dialect match arms (ngspice_device_letter/xyce_device_letter), no
+      dialect-conditional branches mixed into a shared arm. Gate: cargo fmt
+      clean, cargo clippy -D warnings clean, 90/90 cargo test pass.
     depends_on: [CORE-02]
     summary: >
       Implement the per-dialect overlay mechanism the architecture decision
@@ -153,7 +177,14 @@ epics:
   - id: CORE-04
     title: ngspice element-instance parser
     area: ngspice-devices
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. servers/core/src/parser/ngspice.rs element tests
+      pass for R/C/L/K/V/I/D/Q/J/Z/M/E/G/F/H/B/S/W/T/X plus ngspice-specific
+      A (XSPICE code model), N, O, U (ngspice UniformRCLine meaning, not
+      Xyce's), Y letters; malformed lines (too few nodes) return a
+      ParseError, not a panic. Gate: cargo fmt clean, cargo clippy -D
+      warnings clean, 90/90 cargo test pass.
     depends_on: [CORE-03]
     summary: >
       Parse ngspice element-instance lines (docs/GRAMMAR.md §3.1/§3.2) from
@@ -185,7 +216,16 @@ epics:
   - id: CORE-05
     title: ngspice .subckt/.model/.param statement parser
     area: ngspice-structural
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. servers/core/src/parser/ngspice.rs structural
+      tests pass: parse_subckt() rejects a `PARAMS:` token with a diagnostic
+      ("PARAMS: keyword is not valid ngspice syntax (Xyce/HSPICE only)") per
+      the confirmed docs/GRAMMAR.md §6.1 finding, and accepts bare
+      ident=value defaults; parse_model() captures name/type/raw params;
+      parse_param() handles multiple ident=expr assignments on one line.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 90/90 cargo
+      test pass.
     depends_on: [CORE-04]
     summary: >
       Parse ngspice `.subckt`/`.ends`, `.model`, and `.param` statements
@@ -216,7 +256,16 @@ epics:
   - id: CORE-06
     title: Xyce element-instance parser
     area: xyce-devices
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. servers/core/src/parser/xyce.rs element tests
+      pass: `P` resolves to PortDevice (not ngspice's coupled-multiconductor-
+      line meaning); BJT bracketed substrate node `[SUB]` parses correctly
+      and is distinguished from the numeric-4th-node and no-substrate forms;
+      the Y<type> family (YACC, YDELAY, YLIN, YMEMRISTOR, ytransline, YPDE)
+      each resolve to a distinct DeviceKind via resolve_y_type(), not a
+      generic Y fallback. Gate: cargo fmt clean, cargo clippy -D warnings
+      clean, 90/90 cargo test pass.
     depends_on: [CORE-03]
     summary: >
       Parse Xyce element-instance lines (docs/GRAMMAR.md §3.1/§3.2) into
@@ -247,7 +296,17 @@ epics:
   - id: CORE-07
     title: Xyce .subckt/.model/.param(+.global_param) statement parser
     area: xyce-structural
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-30. servers/core/src/parser/xyce.rs structural tests
+      pass: parse_subckt() accepts an optional `PARAMS:` token (unlike
+      ngspice); parse_model() rejects PSpice-style partial/nested
+      parenthesization and comma-separated param lists with distinct
+      diagnostics, matching docs/GRAMMAR.md §6.2; parse_global_param() is a
+      separate code path from parse_param() and correctly flags
+      .global_param appearing inside a .subckt body (tracked via
+      subckt_depth) as a diagnostic, not silently accepted. Gate: cargo fmt
+      clean, cargo clippy -D warnings clean, 90/90 cargo test pass.
     depends_on: [CORE-06]
     summary: >
       Parse Xyce `.subckt`/`.ends`, `.model`, `.param`, and `.global_param`
