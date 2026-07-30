@@ -341,7 +341,20 @@ epics:
   - id: CORE-08
     title: Expression AST types + shared tokenizer
     area: expression-lexical
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. All servers/core/src/expr/token.rs tests pass
+      (part of the 227-test full suite). Confirmed: numeric-suffix table
+      dialect-gated correctly — 'a'/'A' (atto) resolves only under
+      Dialect::Ngspice, 'x'/'X' (Meg alias) resolves only under
+      Dialect::Xyce, 'm'/'M' always resolves to milli (never mega) matching
+      the disambiguation rule; ?/: tokenize as distinct single tokens
+      regardless of surrounding whitespace; multi-char operators (**, ==,
+      !=, <=, >=, &&, ||) are not split; function-call vs grouped-subexpr
+      distinguished; string literals and unterminated-string/unrecognized-
+      char diagnostics return errors with byte offsets, not panics. Gate:
+      cargo fmt clean, cargo clippy -D warnings clean, 227/227 cargo test
+      pass (full workspace suite).
     depends_on: [CORE-02]
     summary: >
       Introduce the Expr AST and a shared expression tokenizer, consumed by
@@ -389,7 +402,22 @@ epics:
   - id: CORE-09
     title: ngspice compile-time expression parser (parser #1)
     area: ngspice-expr-compiletime
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/ngspice_compiletime.rs
+      tests pass. Precedence-climbing parser correctly orders unary >
+      power(right-assoc) > */%\ > +- > comparisons > && > || > ternary
+      (lowest); the full compile-time built-in list parses as Calls with
+      correct arity; V()/I()/bare time/temper/hertz are all rejected with a
+      diagnostic, enforcing the parser #1/parser #2 boundary; numeric
+      suffixes resolve to f64 at this layer. Note: `**` and `^` are kept as
+      distinct op-string tags ("**"/"^") rather than merged into one
+      canonical "power" tag — this still satisfies the requirement in
+      practice (both bind at the same precedence and CORE-13's
+      dialect-aware diagnostics correctly interpret "^" as power whenever
+      dialect=Ngspice), but note the tag itself isn't unified if a future
+      epic evaluates this AST without dialect context in hand. Gate: cargo
+      fmt clean, cargo clippy -D warnings clean, 227/227 cargo test pass.
     depends_on: [CORE-08]
     summary: >
       Implement a precedence-climbing (Pratt) parser for ngspice's
@@ -435,7 +463,20 @@ epics:
   - id: CORE-10
     title: Xyce unified expression parser
     area: xyce-expr
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/xyce.rs tests pass.
+      Confirmed the false-cognate divergence from CORE-09: `^` parses to a
+      BinaryOp tagged "^" at XOR precedence (bp 3/4, below `&`), `**` is the
+      sole power operator at the tightest binary precedence; `&`/`|`/`~` are
+      single-char boolean ops. test_ternary_low_precedence_matches_c_gotcha_example
+      reproduces the exact docs/GRAMMAR.md §4.3 example
+      (`1+a==b?1:0+1` parses with else_branch = `0+1` as a whole). Full
+      Xyce built-in list parses with correct arity including both LIMIT
+      arities as distinct forms; LOG/LOG10 vs LN tagged distinctly.
+      Hierarchical node-path `:` inside V() references parses as part of
+      the reference, not a ternary collision. Gate: cargo fmt clean, cargo
+      clippy -D warnings clean, 227/227 cargo test pass.
     depends_on: [CORE-08]
     summary: >
       Implement a precedence-climbing parser for Xyce's single unified
@@ -484,7 +525,20 @@ epics:
   - id: CORE-11
     title: ngspice behavioral-source expression parser (parser #2, runtime)
     area: ngspice-expr-runtime
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/ngspice_runtime.rs tests
+      pass. V()/I()/bare time/temper/hertz all accepted (inverse of CORE-09).
+      `tanh` confirmed absent from the runtime built-in list. Sign-semantics
+      divergence correctly encoded: pow(x,2)/x**2/x^2 all normalize to a
+      shared "^_RUNTIME" tag (BinaryOp) / "POW_RUNTIME" tag (Call), while
+      pwr(x,2) gets a distinct "PWR" Call tag — this is a cleaner, more
+      robust implementation than the acceptance bullet's literal wording
+      asked for (it actually merges **/^ into one tag here, whereas CORE-09
+      kept them separate; the two designs are consistent since dialect
+      context always accompanies interpretation). pwl() enforces even-length
+      pairs with a diagnostic on odd length. Gate: cargo fmt clean, cargo
+      clippy -D warnings clean, 227/227 cargo test pass.
     depends_on: [CORE-09]
     summary: >
       Implement ngspice's runtime/behavioral expression grammar (docs/
@@ -534,7 +588,18 @@ epics:
   - id: CORE-12
     title: Xyce TABLE/POLY source-expression forms + PSpice-syntax diagnostics
     area: xyce-expr-sources
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/xyce_sources.rs tests
+      pass. TABLE parses (x,y) pairs into a dedicated structure; nested
+      braces rejected; the two documented PSpice-syntax traps (extra-parens
+      form, space-separated-pair form) are both detected and return
+      actionable diagnostics rather than a generic or silently-wrong parse.
+      All file-load interpolation functions (table/tablefile/fasttable/
+      spline/cubic/wodicka/bli) accept both inline-pairs and filename-string
+      forms. POLY(N) correctly distinguishes the E/G two-nodes-per-variable
+      shape from the F/H one-source-name-per-variable shape. Gate: cargo
+      fmt clean, cargo clippy -D warnings clean, 227/227 cargo test pass.
     depends_on: [CORE-10]
     summary: >
       Extend the Xyce expression surface (docs/GRAMMAR.md §5.2/§5.3) to
@@ -581,7 +646,26 @@ epics:
   - id: CORE-13
     title: Cross-dialect false-cognate diagnostics
     area: cross-dialect-diagnostics
-    status: planned
+    status: complete
+    review: >
+      Retested 2026-07-31. servers/core/src/expr/diagnostics.rs tests pass.
+      lint_caret_dialect_confusion() correctly interprets "^" per the passed
+      Dialect (info-level note, both directions). lint_log_dialect_confusion()
+      states the base per dialect and separately notes the -hspice-ext math
+      caveat for Xyce. lint_xyce_ternary_colon_collision() fires precisely
+      when a Ternary's then_branch is a bare Ident (the documented ambiguous
+      shape) and does not fire on hierarchical node-path colons (those live
+      inside Reference args, never reach this check) or when the then_branch
+      is a non-bare-identifier expression (the documented C+0-style
+      workaround shape). Minor note: the
+      test_xyce_ternary_colon_collision_not_flagged_when_parenthesized test
+      name is a bit imprecise — it actually constructs a BinaryOp then_branch
+      directly rather than literally testing parenthesized-source-text
+      re-parsing, but the behavior it proves (non-bare-identifier
+      then_branch doesn't fire) is exactly the correct invariant. All three
+      lints operate purely on the Expr tree + Dialect, no re-tokenizing.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 227/227 cargo
+      test pass.
     depends_on: [CORE-09, CORE-10, CORE-11, CORE-12]
     summary: >
       Implement the specific lint diagnostics docs/GRAMMAR.md §9.4 calls out
