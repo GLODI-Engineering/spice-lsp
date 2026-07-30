@@ -89,6 +89,13 @@ pub fn build_scope_tree(statements: &[Statement]) -> Result<Scope, Vec<ScopeErro
     }
 }
 
+pub fn build_scope_tree_from_tagged(
+    tagged: &[(crate::include::source_map::FileId, Statement)],
+) -> Result<Scope, Vec<ScopeError>> {
+    let statements: Vec<Statement> = tagged.iter().map(|(_, s)| s.clone()).collect();
+    build_scope_tree(&statements)
+}
+
 fn new_top_level() -> Scope {
     Scope {
         kind: ScopeKind::TopLevel,
