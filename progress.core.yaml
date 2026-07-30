@@ -37,6 +37,9 @@ phases:
   - id: P2
     name: Xyce dialect overlay
     epics: [CORE-06, CORE-07]
+  - id: P3
+    name: Expression grammar
+    epics: [CORE-08, CORE-09, CORE-10, CORE-11, CORE-12, CORE-13]
 
 epics:
 
@@ -334,3 +337,287 @@ epics:
         - "test_model_rejects_partial_parens"
         - "test_model_rejects_comma_separated_params"
         - "test_global_param_inside_subckt_is_diagnostic"
+
+  - id: CORE-08
+    title: Expression AST types + shared tokenizer
+    area: expression-lexical
+    status: planned
+    depends_on: [CORE-02]
+    summary: >
+      Introduce the Expr AST and a shared expression tokenizer, consumed by
+      the per-dialect parsers in CORE-09/CORE-10. Covers docs/GRAMMAR.md §2
+      (numbers/units) and the lexical parts of §4.3 (operators as raw
+      tokens, not yet given per-dialect meaning) and §5 (V()/I() reference
+      call syntax, string literals for TABLE file-load forms). This epic
+      does NOT resolve what an operator means (e.g. whether `^` is power or
+      XOR) — it only tokenizes; per-dialect meaning is CORE-09/CORE-10's
+      job, per the AGENTS.md architecture invariant. Input to this tokenizer
+      is the raw expression text already captured as raw params/body strings
+      by CORE-05/CORE-07 (e.g. `Param.assignments` RHS, `Func.body`,
+      `ElementInstance.raw_params` entries for B/E/G sources).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/ast.rs
+        - servers/core/src/expr/token.rs
+        - servers/core/src/expr/mod.rs
+        - servers/core/src/lib.rs
+      acceptance:
+        - "An `Expr` AST enum exists with at least: Number(f64, Option<String> raw_suffix), Ident(String), StringLit(String), Call(name: String, args: Vec<Expr>), BinaryOp(op: String, lhs, rhs), UnaryOp(op: String, operand), Ternary(cond, then, else), Reference(kind: V|I|N, args: Vec<String>) for V()/I()/N() node/current references."
+        - "tokenize() recognizes a SPICE numeric literal with scale suffix (docs/GRAMMAR.md §2 table: T,G,Meg,K,mil,m,u,n,p,f,a, plus Xyce's X=Meg alias) and separates it from a following bare identifier, e.g. `10k` tokenizes as one number token, `10 kOhms` as a number token then an identifier token."
+        - "tokenize() recognizes multi-character operators as single tokens without ambiguity: `**`, `==`, `!=`, `<=`, `>=`, `&&`, `||` are each one token, not two single-char tokens glued together."
+        - "tokenize() recognizes `?` and `:` as distinct single-char operator tokens even when not surrounded by whitespace, e.g. `a?b:c` tokenizes identically to `a ? b : c` — this directly addresses the ngspice \"space before ?\" gotcha from docs/GRAMMAR.md §5.1 by making the tokenizer robust to the no-space form rather than relying on user-supplied whitespace."
+        - "tokenize() recognizes a `name(` sequence (no space before the paren) as the start of a function-call/reference token distinct from a bare identifier followed by a parenthesized sub-expression — both parse to the same shape (Call), but the distinction matters for V(1,2) vs a hypothetical `x * (y)`."
+        - "tokenize() recognizes double-quoted string literals for file-load forms (e.g. `tablefile(\"file.dat\")`), including the no-quote-escaping-needed common case; does not attempt full string-escape-sequence support beyond docs/GRAMMAR.md's documented examples."
+        - "tokenize() returns a diagnostic-carrying error (not a panic) for unterminated string literals and unrecognized characters, with the offending byte offset."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/token.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "one test per numeric-suffix case from docs/GRAMMAR.md §2's table, both dialects, including Xyce's X=Meg alias and the absence of a-suffix by default"
+        - "test_decorative_trailing_letters_ignored (10V, 10Hz, 10Volts all number 10)"
+        - "test_multi_char_operators_not_split (**, ==, !=, <=, >=, &&, ||)"
+        - "test_ternary_no_space_before_question_mark"
+        - "test_function_call_vs_grouped_subexpression"
+        - "test_string_literal_in_tablefile_call"
+        - "test_unterminated_string_literal_returns_diagnostic_not_panic"
+        - "test_unrecognized_character_returns_diagnostic_with_offset"
+        - "edge case: empty expression string"
+        - "edge case: expression that is only whitespace"
+
+  - id: CORE-09
+    title: ngspice compile-time expression parser (parser #1)
+    area: ngspice-expr-compiletime
+    status: planned
+    depends_on: [CORE-08]
+    summary: >
+      Implement a precedence-climbing (Pratt) parser for ngspice's
+      compile-time expression grammar (docs/GRAMMAR.md §4.3, the grammar
+      used by `.param`, `.func`, brace-expressions, and subcircuit
+      parameter defaults — "parser #1" in the ngspice multi-grammar split
+      from §0/§9.1). Encodes ngspice's specific 8-level precedence table,
+      its operator set (`** ^` both mean power; `&& || !` boolean; no `&`
+      single-char boolean-and), and its compile-time built-in function list
+      (sqrt, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh,
+      acosh, atanh, arctan, exp, ln, log, log10, abs, nint, int, floor,
+      ceil, pow, pwr, min, max, sgn, ternary_fcn, gauss, agauss, unif,
+      aunif, limit, var, vec). This parser does NOT accept V()/I()/time/
+      temper/hertz references — those are illegal in ngspice's compile-time
+      context per docs/GRAMMAR.md §0 (parser #1 "never sees solution
+      variables"); rejecting them here IS the epic's job, not a follow-on.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/ngspice_compiletime.rs
+      acceptance:
+        - "parse_ngspice_compiletime(tokens) builds an Expr tree respecting the docs/GRAMMAR.md §4.3 precedence table: unary `-`/`!` tightest, then `** `/`^` (right-associative), then `* / % \\`, then `+ -`, then comparisons, then `&&`, then `||`, then `c?x:y` loosest."
+        - "`**` and `^` both parse to the same power BinaryOp variant/tag in this ngspice compile-time parser."
+        - "Every function name in the compile-time built-in list above is accepted as a Call with the documented arity where fixed (e.g. sqrt/sin/... are 1-arg, min/max/pow/pwr are 2-arg, gauss/agauss/unif/aunif are 2 or 3-arg per docs/GRAMMAR.md §4.3, ternary_fcn is 3-arg); an unrecognized function name still parses structurally as a Call (so a later semantic pass can diagnose it) rather than failing to parse."
+        - "A V(...), I(...), or bare `time`/`temper`/`hertz` reference in this parser's input produces a diagnostic-carrying parse error, not a successful Expr — this is the parser #1/parser #2 boundary enforcement."
+        - "Numeric-suffix scale factors from CORE-08 are applied so that `1k * 2` and `2000` evaluate structurally to the same Number-times-Number shape (i.e. the suffix is resolved to its multiplier at this layer, not left as an opaque string) — the AST stores the resolved f64 value; docs/GRAMMAR.md §2's decorative-trailing-letters rule already stripped noise at the tokenizer."
+        - "Malformed input (unbalanced parens, trailing operator, empty function-call args where required) produces a diagnostic-carrying parse error with a span, not a panic."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/ngspice_compiletime.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "one precedence test per adjacent pair of levels in the 8-level table, proving the tighter one binds first (e.g. `2+3*4` parses as `2+(3*4)`, not `(2+3)*4`)"
+        - "test_double_star_and_caret_both_mean_power"
+        - "test_power_is_right_associative (2**3**2 == 2**(3**2) shape)"
+        - "one test per built-in function name, asserting Call arity"
+        - "test_ternary_lowest_precedence (1+2==3?4:5+6 parses per docs/GRAMMAR.md §4.3 shape)"
+        - "test_v_reference_rejected_in_compiletime_context"
+        - "test_bare_time_identifier_rejected_in_compiletime_context"
+        - "test_unbalanced_parens_returns_diagnostic_not_panic"
+        - "test_suffix_resolved_to_numeric_value (1k parses to Number(1000.0, Some(\"k\")))"
+
+  - id: CORE-10
+    title: Xyce unified expression parser
+    area: xyce-expr
+    status: planned
+    depends_on: [CORE-08]
+    summary: >
+      Implement a precedence-climbing parser for Xyce's single unified
+      expression grammar (docs/GRAMMAR.md §4.3/§4.4), used across
+      `.param`/`.global_param`/`.func`/B-sources/`.print`. Encodes Xyce's
+      distinct operator set — critically `^` means **boolean XOR** here,
+      NOT power (only `**` is power; this is the false-cognate divergence
+      from CORE-09 flagged in docs/GRAMMAR.md §4.3), `&`/`|`/`~` are
+      boolean and/or/not (not `&&`/`||`), and the ternary `c?x:y` has very
+      low precedence matching C's, with the documented `:`-collision
+      lint case deferred to CORE-13. Also implements Xyce's `+` operator
+      double duty (numeric add vs. string concatenation, resolved
+      structurally by operand type where knowable, otherwise left
+      ambiguous for a later semantic pass) and the Xyce built-in function
+      list (ABS, CEIL, DDT, DDX, FLOOR, FMOD, IF, INT, LIMIT-3arg, M,
+      MIN, MAX, NINT, PWR, POW, PWRS, SDT, SGN, SIGN, STP, SQRT, URAMP,
+      trig/hyperbolic set, LOG/LOG10/LN, complex-number ops DB/IMG/PH/R/RE,
+      random ops AGAUSS/GAUSS/AUNIF/UNIF/LIMIT-2arg/RAND, and the
+      SPICE_EXP/SPICE_PULSE/SPICE_SFFM/SPICE_SIN compatibility functions).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/xyce.rs
+      acceptance:
+        - "parse_xyce(tokens) treats `^` as boolean XOR (a BinaryOp distinct from the power operator) and `**` as the sole power operator — this must differ observably from CORE-09's ngspice parser given the same `^` input token."
+        - "parse_xyce(tokens) accepts `&`, `|`, `~` as boolean and/or/not (not `&&`/`||`/`!`), per docs/GRAMMAR.md §4.3's Xyce operator table."
+        - "The ternary operator parses at the lowest precedence, matching the documented gotcha: `1+a==b?1:0+1` parses as `IF(1+a==b, 1, 0+1)`, i.e. the whole `0+1` is the else-branch, not `(1+a==b?1:0)+1`."
+        - "Every function name in the Xyce built-in list above is accepted as a Call with correct arity where fixed (e.g. DDX takes 2 args: an expression and a variable; LIMIT accepts both a 2-arg random form and a 3-arg deterministic-clamp form, and the parser preserves which arity was used since they mean different things per docs/GRAMMAR.md §4.3)."
+        - "`LOG`/`LOG10` parse as Calls tagged distinctly from `LN`, preserving the base-10-vs-natural-log distinction at the AST level (this parser does not resolve the `-hspice-ext math` runtime flag — that's a later semantic-pass concern; the AST must retain enough information for that pass to act on)."
+        - "A hierarchical node-path token containing `:` (e.g. as it would appear inside a `V(...)` reference like `V(Xmain:Xnot1:A)`) is tokenized/parsed as part of the reference argument, not misinterpreted as a ternary colon — this is the non-ambiguous case; the genuinely ambiguous bare-identifier-left-of-`:` case is CORE-13's diagnostic, not a parse-time behavior change here."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/xyce.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_caret_is_xor_not_power"
+        - "test_double_star_is_power"
+        - "test_boolean_and_or_not_are_single_char"
+        - "test_ternary_low_precedence_matches_c_gotcha_example (the exact 1+a==b?1:0+1 example from docs/GRAMMAR.md §4.3)"
+        - "one test per built-in function name, asserting Call arity, including both LIMIT arities as distinct cases"
+        - "test_log_log10_ln_tagged_distinctly"
+        - "test_hierarchical_node_path_inside_v_reference_not_misparsed_as_ternary"
+        - "test_plus_operator_on_two_string_literals_vs_two_numbers (structural distinction where operand types are known)"
+        - "test_unbalanced_parens_returns_diagnostic_not_panic"
+
+  - id: CORE-11
+    title: ngspice behavioral-source expression parser (parser #2, runtime)
+    area: ngspice-expr-runtime
+    status: planned
+    depends_on: [CORE-09]
+    summary: >
+      Implement ngspice's runtime/behavioral expression grammar (docs/
+      GRAMMAR.md §5.1, "parser #2" — used by B/E/G-sources and behavioral
+      R/L/C `R=`/`C=`/`L=`/`Q=` forms). This is a SEPARATE grammar from
+      CORE-09's compile-time parser, not a superset/subset relationship
+      dressed up as one — per docs/GRAMMAR.md §0 and §4.3, the function set
+      genuinely differs (this parser's function list explicitly lacks
+      `tanh`, present in CORE-09's list) and `pow`/`**`/`^`/`pwr` have
+      different sign-handling semantics here (`pow`/`**`/`^` all discard
+      the sign of the first operand via `pow(fabs(x1),x2)`; `pwr` preserves
+      it) than in CORE-09's compile-time parser (where docs/GRAMMAR.md
+      §4.3's `hs`/`lt` compat-mode formulas apply instead). This parser
+      DOES accept V()/I()/time/temper/hertz references and the pwl()
+      table-lookup function with linear-extrapolation-past-range semantics
+      (contrast with Xyce's clamping TABLE in CORE-12).
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/ngspice_runtime.rs
+      acceptance:
+        - "parse_ngspice_runtime(tokens) accepts V(node) and V(node1,node2) and I(devname) as Reference expressions, and accepts bare `time`, `temper`, `hertz` identifiers as special references — all of which CORE-09's compile-time parser rejects."
+        - "parse_ngspice_runtime(tokens) does NOT include `tanh` in its accepted built-in function list, even though CORE-09's compile-time parser does — an input using `tanh(x)` here produces a Call that a later semantic pass flags as unknown, matching the documented function-set gap in docs/GRAMMAR.md §5.1."
+        - "`pow(x1,x2)`, `x1**x2`, and `x1^x2` all parse to the SAME tagged BinaryOp/Call variant here, distinct from the tag CORE-09 uses for its compile-time `pow`/`**`/`^`, so a later evaluation pass can apply this parser's sign-discarding semantics (`pow(fabs(x1),x2)`) instead of CORE-09's compile-time formula — the AST tag itself must encode which grammar produced it."
+        - "`pwr(x1,x2)` parses to a distinct Call tag from `pow`/`**`/`^`, preserving the sign-vs-no-sign distinction structurally."
+        - "The unit-step family `u(x)`, `u2(x)`, `uramp(x)` parse as 1-arg Calls."
+        - "`pwl(controlling_expr, x0,y0, x1,y1, ...)` parses as a Call whose first argument is a full sub-expression (not just a bare identifier) and whose remaining arguments are an even-length flat list of x,y pairs; a malformed odd-length pair list produces a diagnostic-carrying error, not a panic."
+        - "`i(devname)` (lowercase, current-through-device-instance form distinct from I() as a general reference) is accepted per docs/GRAMMAR.md §5.1's function list."
+        - "The ternary operator requires no special-cased whitespace handling here (CORE-08's tokenizer already made `?`/`:` unambiguous) — this acceptance bullet exists to confirm CORE-11 doesn't reintroduce a whitespace dependency the tokenizer already solved."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/ngspice_runtime.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_v_single_node_reference"
+        - "test_v_two_node_reference"
+        - "test_i_devname_reference"
+        - "test_bare_time_temper_hertz_accepted"
+        - "test_tanh_not_in_runtime_function_list"
+        - "test_pow_caret_doublestar_share_sign_discarding_tag"
+        - "test_pwr_has_distinct_sign_preserving_tag"
+        - "test_unit_step_family_u_u2_uramp"
+        - "test_pwl_even_length_pairs"
+        - "test_pwl_odd_length_pairs_returns_diagnostic_not_panic"
+        - "test_lowercase_i_devname_form"
+
+  - id: CORE-12
+    title: Xyce TABLE/POLY source-expression forms + PSpice-syntax diagnostics
+    area: xyce-expr-sources
+    status: planned
+    depends_on: [CORE-10]
+    summary: >
+      Extend the Xyce expression surface (docs/GRAMMAR.md §5.2/§5.3) to
+      cover the B/E/G-source-specific forms layered on top of CORE-10's
+      core grammar: `TABLE {expr} = (x0,y0)(x1,y1)...` with Xyce's
+      boundary-clamping semantics (contrast with ngspice's pwl()
+      extrapolation from CORE-11), the file-load interpolation functions
+      (table/tablefile/fasttable/spline(akima)/cubic/wodicka/bli), and
+      `POLY(N)` sugar for E/F/G/H sources. Also implements the specific
+      PSpice-compatibility diagnostic docs/GRAMMAR.md §5.2 calls out:
+      recognizing (and rejecting with an actionable message, not silently
+      accepting a wrong parse) the PSpice-style `TABLE {EXPR} ((x1,y1)...)`
+      extra-parens form and the `TABLE {EXPR} = (x1 y1)...` space-instead-
+      of-comma form, both of which are illegal Xyce syntax.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/xyce_sources.rs
+      acceptance:
+        - "parse_xyce_table(text) accepts `TABLE {expr} = (x0,y0)(x1,y1)...` with an optional single brace pair around `expr` and produces a Call/dedicated TableExpr AST node carrying the pairs as (Expr,Expr) tuples, not just opaque strings."
+        - "parse_xyce_table(text) rejects a doubly-braced expression like `{V(...)+{5}}` with a diagnostic naming nested braces as the problem, per docs/GRAMMAR.md §5.2's explicit nested-brace-is-illegal note."
+        - "parse_xyce_table(text) detects the PSpice-style extra-parens variant `TABLE {EXPR} ((x1,y1)...)` and returns a diagnostic that names the exact fix (normalize to `TABLE {EXPR} = (x1,y1)...`), not a generic parse-error."
+        - "parse_xyce_table(text) detects the PSpice-style space-separated-pair variant `TABLE {EXPR} = (x1 y1)...` and returns a diagnostic naming the missing comma, not a generic parse-error or a silently-wrong parse."
+        - "table/tablefile/fasttable/spline/akima/cubic/wodicka/bli all parse as Calls accepting either inline (x,y,...) pairs or a single string-literal filename argument (the file-load form), per docs/GRAMMAR.md §5.1/§5.2."
+        - "POLY(N) parses with the correct node-pair-count-per-variable shape for the E/G (voltage-controlled, 2 nodes per variable) form and the correct single-controlling-source-name-per-variable shape for the F/H (current-controlled) form, distinguishing which by which parse_xyce_table/poly entry point is called (element-kind context comes from the caller, not re-derived here)."
+      # Note: this epic's PSpice-syntax diagnostics are Xyce-specific because
+      # docs/GRAMMAR.md §5.2 documents them only for Xyce's TABLE form; if a
+      # similar PSpice-compat gap surfaces for ngspice E/G sources later,
+      # that is a new epic, not a silent extension of this one.
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/xyce_sources.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_table_basic_pairs"
+        - "test_table_nested_braces_rejected"
+        - "test_table_pspice_extra_parens_rejected_with_actionable_message"
+        - "test_table_pspice_space_separated_pairs_rejected_with_actionable_message"
+        - "one test per file-load interpolation function name, inline-pairs form"
+        - "one test per file-load interpolation function name, filename-string form"
+        - "test_poly_e_g_two_nodes_per_variable"
+        - "test_poly_f_h_one_source_name_per_variable"
+
+  - id: CORE-13
+    title: Cross-dialect false-cognate diagnostics
+    area: cross-dialect-diagnostics
+    status: planned
+    depends_on: [CORE-09, CORE-10, CORE-11, CORE-12]
+    summary: >
+      Implement the specific lint diagnostics docs/GRAMMAR.md §9.4 calls out
+      as "high-value, cheap wins once a basic parser exists": (1) `^`
+      operator meaning depends on declared dialect — warn if code appears
+      to have been written assuming the other dialect's meaning (heuristic:
+      flag when `^` result would silently produce a very different value
+      class, e.g. used where a power-like magnitude is expected in Xyce, or
+      used where a boolean is expected in ngspice); (2) `log()`/`log10()`
+      meaning depends on declared dialect (and the `-hspice-ext math` flag
+      for Xyce) — surface this as an always-on hover/info note on `log`
+      calls, not just a warning, since silent wrong-base-log is hard to
+      spot by inspection; (3) Xyce's ternary `:`-collision — flag a bare
+      parameter/identifier token immediately followed by `:` with no space,
+      per the documented `{(A==B)?C:D}` syntax-error case from docs/
+      GRAMMAR.md §4.3, distinguishing it from the legitimate hierarchical-
+      node-path `:` usage CORE-10 already parses correctly.
+    implementation:
+      owner: coder-agent
+      paths:
+        - servers/core/src/expr/diagnostics.rs
+      acceptance:
+        - "A `Diagnostic` type exists (or reuses ParseError's shape, extended with a severity: Error|Warning|Info) that diagnostics.rs functions return alongside/instead of a hard parse failure — these are lints on an already-successfully-parsed Expr tree, not new parse errors."
+        - "lint_caret_dialect_confusion(expr, dialect) flags a `^` usage and names which meaning applies for the declared dialect, so a hover-provider caller can surface \"this ^ means XOR (Xyce)\" or \"this ^ means power (ngspice)\" without re-deriving it."
+        - "lint_log_dialect_confusion(expr, dialect) flags every `log`/`log10`/`ln` Call and states which base applies for the declared dialect, and separately notes when the call would mean something different under Xyce's `-hspice-ext math` flag (informational, not assuming the flag is set)."
+        - "lint_xyce_ternary_colon_collision(expr) flags the specific ambiguous pattern — a bare identifier/parameter token immediately adjacent to `:` where a space or an enclosing parenthesis is absent — and suggests the two documented fixes from docs/GRAMMAR.md §4.3 (add a space, or wrap the branch in parens), while NOT flagging a `:` that CORE-10 already resolved as part of a hierarchical node-path reference."
+        - "All three lint functions operate purely on the Expr AST plus the declared Dialect — no re-tokenizing or re-parsing of raw text, keeping this epic strictly downstream of CORE-09/CORE-10/CORE-11/CORE-12."
+    tests:
+      owner: tester-agent
+      paths:
+        - servers/core/src/expr/diagnostics.rs   # #[cfg(test)] mod tests
+      acceptance:
+        - "test_caret_lint_fires_with_correct_meaning_per_dialect (both dialects)"
+        - "test_log_lint_states_base_per_dialect (both dialects)"
+        - "test_log_lint_notes_hspice_ext_math_caveat_for_xyce"
+        - "test_xyce_ternary_colon_collision_flagged_on_bare_identifier"
+        - "test_xyce_ternary_colon_collision_not_flagged_on_hierarchical_node_path"
+        - "test_xyce_ternary_colon_collision_not_flagged_when_parenthesized"
+        - "test_no_lints_fire_on_dialect_correct_unambiguous_expression (negative case, both dialects)"
