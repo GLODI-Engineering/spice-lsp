@@ -39,6 +39,15 @@ with dialect checks scattered through the logic. New device/statement/
 operator support belongs in a dialect overlay table, not as an `if dialect
 == ...` branch inside shared parsing logic.
 
+## Commit cadence
+
+Commit after every epic is implemented and all gates pass —
+one commit per epic, not one commit at the end of a long session.
+An epic is done when its `implementation.acceptance` items are met,
+**all tests (including the epic's own `tests.acceptance` list) pass**,
+and `cargo fmt` + `cargo clippy -D warnings` + `cargo test --workspace`
+are all green. Never commit an epic that hasn't been tested.
+
 ## Gates (run before every commit — see `/commit`)
 
 Rust (`servers/core`, and any future `servers/*` Rust crate):
