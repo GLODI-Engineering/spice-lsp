@@ -22,9 +22,9 @@ fn wire_runtime_in_scope(scope: &Scope, dialect: Dialect, results: &mut Vec<Wire
     for stmt in &scope.statements {
         if let Statement::ElementInstance(ei) = stmt {
             let letter = ei.device_letter.to_ascii_uppercase();
-            let is_behavioral = matches!(letter, 'B' | 'E' | 'G' | 'F' | 'H');
 
-            if is_behavioral {
+            // B sources: V= and I= forms
+            if letter == 'B' {
                 for param in &ei.raw_params {
                     if let Some(rest) = param
                         .strip_prefix("V=")
@@ -40,6 +40,74 @@ fn wire_runtime_in_scope(scope: &Scope, dialect: Dialect, results: &mut Vec<Wire
                 }
             }
 
+            // E/G/F/H sources: TABLE/POLY forms + VALUE form
+            if matches!(letter, 'E' | 'G' | 'F' | 'H') && !ei.raw_params.is_empty() {
+                let first = ei.raw_params[0].to_uppercase();
+                let joined = ei.raw_params.join(" ");
+
+                if first == "TABLE" {
+                    if dialect == Dialect::Xyce {
+                        match crate::expr::xyce_sources::parse_xyce_table(&joined) {
+                            Ok(_) => {
+                                results.push(WiredRuntimeExpr {
+                                    span: ei.span.clone(),
+                                    expr: None,
+                                    error: None,
+                                });
+                            }
+                            Err(e) => {
+                                results.push(WiredRuntimeExpr {
+                                    span: ei.span.clone(),
+                                    expr: None,
+                                    error: Some(e.message),
+                                });
+                            }
+                        }
+                    } else {
+                        let parsed = parse_runtime(&joined, dialect);
+                        results.push(WiredRuntimeExpr {
+                            span: ei.span.clone(),
+                            expr: parsed.0,
+                            error: parsed.1,
+                        });
+                    }
+                } else if first.starts_with("POLY") {
+                    let parsed = parse_runtime(&joined, dialect);
+                    results.push(WiredRuntimeExpr {
+                        span: ei.span.clone(),
+                        expr: parsed.0,
+                        error: parsed.1,
+                    });
+                } else if first == "VALUE" {
+                    // VALUE = {expr} form
+                    let rest = ei.raw_params[1..].join(" ");
+                    if let Some(eq_text) = rest.strip_prefix("=") {
+                        let parsed = parse_runtime(eq_text.trim(), dialect);
+                        results.push(WiredRuntimeExpr {
+                            span: ei.span.clone(),
+                            expr: parsed.0,
+                            error: parsed.1,
+                        });
+                    }
+                } else {
+                    // Plain form: V= / I= on E/G/F/H
+                    for param in &ei.raw_params {
+                        if let Some(rest) = param
+                            .strip_prefix("V=")
+                            .or_else(|| param.strip_prefix("I="))
+                        {
+                            let parsed = parse_runtime(rest, dialect);
+                            results.push(WiredRuntimeExpr {
+                                span: ei.span.clone(),
+                                expr: parsed.0,
+                                error: parsed.1,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Behavioral R=/C=/L=/Q= on passives
             if matches!(letter, 'R' | 'C' | 'L') {
                 for param in &ei.raw_params {
                     if let Some(rest) = param

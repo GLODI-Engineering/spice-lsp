@@ -80,6 +80,14 @@ fn parse_dot_command(line: &str, span: LineSpan) -> ParseResult {
             raw_args: rest_after(&first_word(&upper), line),
             span,
         })
+    } else if is_xyce_only_keyword(&upper) {
+        Err(ParseError {
+            message: format!(
+                "{} is an Xyce-only statement, not supported in ngspice",
+                first_word(&upper)
+            ),
+            span,
+        })
     } else {
         Ok(Statement::Unrecognized(line.to_string(), span))
     }
@@ -111,6 +119,23 @@ fn is_ngspice_analysis(upper: &str) -> bool {
             | ".WIDTH"
             | ".MEASURE"
             | ".MEAS"
+    )
+}
+
+fn is_xyce_only_keyword(upper: &str) -> bool {
+    let kw = upper.split_whitespace().next().unwrap_or("");
+    matches!(
+        kw,
+        ".STEP"
+            | ".HB"
+            | ".LIN"
+            | ".SAMPLING"
+            | ".EMBEDDEDSAMPLING"
+            | ".PCE"
+            | ".RESULT"
+            | ".SAVE"
+            | ".PREPROCESS"
+            | ".FFT"
     )
 }
 
