@@ -154,6 +154,13 @@ fn is_ngspice_analysis(upper: &str) -> bool {
             | ".WIDTH"
             | ".MEASURE"
             | ".MEAS"
+            // .SAVE exists in BOTH dialects with different semantics
+            // (ngspice: restrict/extend rawfile output set, docs/
+            // GRAMMAR.md §7/§11.6.1; Xyce: save bias-point state) — it is
+            // NOT Xyce-only. Confirmed as a real bug: this was previously
+            // in the Xyce-only-keyword rejection list, which incorrectly
+            // flagged a valid ngspice .SAVE line as an error.
+            | ".SAVE"
     )
 }
 
@@ -168,7 +175,6 @@ fn is_xyce_only_keyword(upper: &str) -> bool {
             | ".EMBEDDEDSAMPLING"
             | ".PCE"
             | ".RESULT"
-            | ".SAVE"
             | ".PREPROCESS"
             | ".FFT"
     )
@@ -336,6 +342,18 @@ fn split_nodes_params(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> Nod
 }
 
 fn split_subcircuit_nodes_params(tokens: &[&str], span: &LineSpan) -> NodeParamsResult {
+    // Same PARAMS: leniency as parse_subckt (see its comment): real
+    // working netlists use `X1 a b FOO PARAMS: x=1` on the call site too,
+    // not just the .subckt definition. Filter it out before positional
+    // node/name detection, otherwise "PARAMS:" itself gets misidentified
+    // as the subckt name and the real subckt name gets counted as a node.
+    let filtered: Vec<&str> = tokens
+        .iter()
+        .filter(|t| t.to_uppercase() != "PARAMS:")
+        .copied()
+        .collect();
+    let tokens: &[&str] = &filtered;
+
     let param_start = tokens.iter().position(|t| t.contains('='));
     let subckt_name_idx = match param_start {
         Some(p) if p > 0 => p.saturating_sub(1),
@@ -396,14 +414,20 @@ fn parse_subckt(line: &str, span: LineSpan) -> ParseResult {
     let name = tokens[0].to_string();
     let remaining = &tokens[1..];
 
-    if remaining.iter().any(|t| t.to_uppercase() == "PARAMS:") {
-        return Err(ParseError {
-            message: "PARAMS: keyword is not valid ngspice syntax (Xyce/HSPICE only)".into(),
-            span,
-        });
-    }
+    // The ngspice-46 manual never documents a PARAMS: keyword (confirmed
+    // by grepping the full manual: zero occurrences), but real working
+    // ngspice netlists in the wild do use it (e.g. `.subckt FOO a b
+    // PARAMS: X=1`) and it evidently parses fine in practice — the actual
+    // ngspice parser is more lenient than its own manual's prose. Filter
+    // it out (matching Xyce's handling) rather than hard-rejecting, so a
+    // real, working netlist doesn't get spurious parse errors.
+    let effective: Vec<&str> = remaining
+        .iter()
+        .filter(|t| t.to_uppercase() != "PARAMS:")
+        .copied()
+        .collect();
 
-    let (nodes, params) = split_node_list_and_param_defaults(remaining);
+    let (nodes, params) = split_node_list_and_param_defaults(&effective);
 
     Ok(Statement::Subckt(Subckt {
         name,
@@ -990,11 +1014,37 @@ mod tests {
     }
 
     #[test]
-    fn test_subckt_rejects_params_keyword() {
-        let results = parsed(".subckt opamp in+ in- out PARAMS: gain=100\n");
-        assert!(results[0].is_err());
-        let err = results[0].as_ref().unwrap_err();
-        assert!(err.message.contains("PARAMS:"));
+    fn test_subckt_tolerates_params_keyword() {
+        // Correction: the ngspice-46 manual never documents a PARAMS:
+        // keyword, but real working ngspice netlists in the wild use it
+        // and it evidently parses fine in practice — confirmed against a
+        // real netlist during full-corpus testing
+        // (Test-simulators-performance/dab/.../dab_pid_ngspice.cir, from
+        // a "successful_attempts" results directory). ngspice's actual
+        // parser is more lenient than its own manual's prose; hard-
+        // rejecting PARAMS: produced spurious errors on working input.
+        let s = ok_statements(parsed(".subckt opamp in+ in- out PARAMS: gain=100\n"));
+        assert_eq!(
+            s[0],
+            Statement::Subckt(Subckt {
+                name: "opamp".into(),
+                nodes: vec!["in+".into(), "in-".into(), "out".into()],
+                params: vec![("gain".into(), Some("100".into()))],
+                span: 1..2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_x_call_tolerates_params_keyword() {
+        let s = ok_statements(parsed("XG1 g1 ref fs PWM_GATE PARAMS: DUTY=0.5\n"));
+        let ei = match &s[0] {
+            Statement::ElementInstance(ei) => ei,
+            other => panic!("expected element instance, got {other:?}"),
+        };
+        assert_eq!(ei.nodes, vec!["g1", "ref", "fs"]);
+        assert_eq!(ei.subckt_name.as_deref(), Some("PWM_GATE"));
+        assert_eq!(ei.raw_params, vec!["DUTY=0.5"]);
     }
 
     #[test]
@@ -1305,6 +1355,16 @@ mod tests {
     #[test]
     fn test_ngspice_only_disto_recognized() {
         let s = ok_statements(parsed(".disto dec 10 1k 100k\n"));
+        assert!(matches!(s[0], Statement::Analysis { .. }));
+    }
+
+    #[test]
+    fn test_save_is_valid_ngspice_not_xyce_only() {
+        // .SAVE exists in BOTH dialects with different semantics (docs/
+        // GRAMMAR.md §7/§11.6.1) — it was incorrectly in the Xyce-only-
+        // keyword rejection list, confirmed by a real-corpus scan finding
+        // a genuine ngspice .SAVE line flagged as an error.
+        let s = ok_statements(parsed(".save v(1) v(2) @r1[i]\n"));
         assert!(matches!(s[0], Statement::Analysis { .. }));
     }
 
