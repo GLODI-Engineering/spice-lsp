@@ -1,3 +1,6 @@
+//! Builds the include/`.lib` dependency graph and merges resolved files
+//! into a single statement list. Entry point: [`resolve_includes`].
+
 use std::path::{Path, PathBuf};
 
 use crate::ast::{LineSpan, Statement};

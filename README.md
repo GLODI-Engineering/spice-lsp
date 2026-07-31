@@ -1,5 +1,10 @@
 # spice-lsp
 
+[![CI](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/spice-core.svg)](https://crates.io/crates/spice-core)
+[![docs.rs](https://img.shields.io/docsrs/spice-core)](https://docs.rs/spice-core)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Language tooling for SPICE-family circuit netlists — ngspice and Xyce
 today, LTspice planned once reference documentation is available.
 
