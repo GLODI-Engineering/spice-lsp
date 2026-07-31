@@ -6,7 +6,7 @@
 //! `RMOD 3 7 RMODEL L=10u W=1u` actually names a model. Getting this
 //! distinction wrong either misses real undefined-model errors or (worse)
 //! false-positives on every ordinary resistor/capacitor/inductor in a
-//! netlist — see [`model_name_from_params`].
+//! netlist — see `model_name_from_params`'s bare-numeric-value heuristic.
 
 use crate::ast::{LineSpan, Statement};
 use crate::dialect::DeviceKind;
@@ -68,9 +68,9 @@ fn model_name_from_params(raw_params: &[String]) -> Option<String> {
 }
 
 /// Resolve every element instance in `scope_tree` that plausibly
-/// references a `.model` (per [`device_takes_model`] and
-/// [`model_name_from_params`]'s bare-numeric-value heuristic) against the
-/// `.model` definitions available to it, flagging undefined references.
+/// references a `.model` (per whether its device kind takes a model at all,
+/// and a bare-numeric-value heuristic on its first raw parameter) against
+/// the `.model` definitions available to it, flagging undefined references.
 /// Devices that structurally never take a model (`V`, `I`, `E`, `G`, `F`,
 /// `H`, `X`) are skipped entirely, not run through model-name detection at
 /// all. Model-binning suffixes (`basename.1`, `basename.2`, ...) resolve

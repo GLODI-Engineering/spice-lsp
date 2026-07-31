@@ -4,7 +4,7 @@
 //! [`crate::expr`]; it does not itself apply operator precedence or
 //! grammar structure, only lexical splitting, including dialect-sensitive
 //! numeric unit-suffix parsing (`X` means ×1e6 in Xyce but is not a suffix
-//! in ngspice, and vice versa for `a`/×1e-18 — see [`parse_scale_suffix`]).
+//! in ngspice, and vice versa for `a`/×1e-18).
 
 use crate::dialect::Dialect;
 
