@@ -5,7 +5,42 @@ use crate::dialect::{DeviceKind, Dialect};
 use crate::lexer::ProcessedLine;
 
 pub fn parse(lines: &[ProcessedLine]) -> Vec<ParseResult> {
-    lines.iter().map(parse_line).collect()
+    let mut results = Vec::with_capacity(lines.len());
+    let mut in_control_block = false;
+
+    for line in lines {
+        let span = span_of(line);
+        let trimmed = line.text.trim();
+        let upper = trimmed.to_uppercase();
+
+        if in_control_block {
+            if upper.starts_with(".ENDC") {
+                in_control_block = false;
+            }
+            // The .control block body is a separate csh-like scripting
+            // language (docs/GRAMMAR.md §6, "ngspice-only mechanism
+            // entirely"), not netlist statements. Feeding lines like
+            // `let`, `if`, `else`, `end`, `echo`, `quit`, or a bare
+            // (dot-less) analysis command like `pz`/`op`/`ac` through the
+            // element/dot-command parser below would misinterpret them as
+            // device instances by first letter (`end` -> E-device/Vcvs,
+            // `quit` -> Q-device/Bjt, etc.) — confirmed against real
+            // ngspice test-suite netlists. Capture the raw text instead of
+            // attempting to parse it as a netlist statement.
+            results.push(Ok(Statement::Unrecognized(trimmed.to_string(), span)));
+            continue;
+        }
+
+        if upper.starts_with(".CONTROL") {
+            in_control_block = true;
+            results.push(Ok(Statement::Unrecognized(trimmed.to_string(), span)));
+            continue;
+        }
+
+        results.push(parse_line(line));
+    }
+
+    results
 }
 
 fn parse_line(line: &ProcessedLine) -> ParseResult {
@@ -241,6 +276,19 @@ fn parse_element(line: &str, span: LineSpan) -> ParseResult {
     }))
 }
 
+fn is_behavioral_source_form(tokens: &[&str]) -> bool {
+    tokens
+        .get(2)
+        .map(|t| {
+            let u = t.to_uppercase();
+            u.starts_with("VOL")
+                || u.starts_with("VALUE")
+                || u.starts_with("TABLE")
+                || u.starts_with("POLY")
+        })
+        .unwrap_or(false)
+}
+
 fn split_nodes_params(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> NodeParamsResult {
     let min = kind.min_nodes();
 
@@ -257,6 +305,15 @@ fn split_nodes_params(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> Nod
                     span: span.clone(),
                 });
             }
+            let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
+            let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
+            Ok((nodes, params, None))
+        }
+        DeviceKind::Vcvs | DeviceKind::Vccs if is_behavioral_source_form(tokens) => {
+            // Alternate 2-node behavioral form: `E/G n+ n- vol='expr'` /
+            // `value={expr}` / `TABLE {expr} = (...)` / `POLY(ND) ...`,
+            // distinct from the classic 4-node form
+            // `E/G n+ n- nc+ nc- gain` (docs/GRAMMAR.md §5.2).
             let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
             Ok((nodes, params, None))
@@ -395,29 +452,18 @@ fn parse_ends(line: &str, span: LineSpan) -> ParseResult {
 
 fn parse_model(line: &str, span: LineSpan) -> ParseResult {
     let rest = line[".model".len()..].trim();
-    let tokens: Vec<&str> = rest.splitn(3, |c: char| c.is_whitespace()).collect();
-
-    if tokens.len() < 2 {
-        return Err(ParseError {
+    match super::split_model_name_type_params(rest) {
+        Some((name, model_type, raw_params)) => Ok(Statement::Model(Model {
+            name,
+            model_type,
+            raw_params,
+            span,
+        })),
+        None => Err(ParseError {
             message: ".model requires name and type".into(),
             span,
-        });
+        }),
     }
-
-    let name = tokens[0].to_string();
-    let model_type = tokens[1].to_string();
-    let raw_params = if tokens.len() > 2 {
-        tokens[2].to_string()
-    } else {
-        String::new()
-    };
-
-    Ok(Statement::Model(Model {
-        name,
-        model_type,
-        raw_params,
-        span,
-    }))
 }
 
 fn parse_param(line: &str, span: LineSpan) -> ParseResult {
@@ -487,9 +533,25 @@ fn parse_func(line: &str, span: LineSpan) -> ParseResult {
         let na = rest[..eq_pos].trim();
         let b = rest[eq_pos + 1..].trim();
         (na, b.to_string())
+    } else if let Some(quote_open) = rest.find('\'') {
+        // ngspice also accepts a single-quoted body with no `=`, e.g.
+        // `.func foo0() '1013.0'` — same quoting convention `.param`
+        // expressions use, confirmed against real ngspice test-suite
+        // netlists (func/func-1.cir).
+        let quote_close = rest.rfind('\'').unwrap_or(rest.len());
+        if quote_close > quote_open {
+            let na = rest[..quote_open].trim();
+            let b = rest[quote_open + 1..quote_close].trim();
+            (na, b.to_string())
+        } else {
+            return Err(ParseError {
+                message: ".func requires a body in {braces}, after =, or in 'quotes'".into(),
+                span,
+            });
+        }
     } else {
         return Err(ParseError {
-            message: ".func requires a body in {braces} or after =".into(),
+            message: ".func requires a body in {braces}, after =, or in 'quotes'".into(),
             span,
         });
     };
@@ -1069,6 +1131,37 @@ mod tests {
     }
 
     #[test]
+    fn test_func_single_quote_body() {
+        // `.func foo0() '1013.0'` — single-quote-delimited body with no
+        // `=` and no `{}`, confirmed against real ngspice test-suite
+        // netlists (func/func-1.cir).
+        let s = ok_statements(parsed(".func foo0()  '1013.0'\n"));
+        assert_eq!(
+            s[0],
+            Statement::Func(Func {
+                name: "foo0".into(),
+                args: vec![],
+                body: "1013.0".into(),
+                span: 1..2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_func_single_quote_body_with_args() {
+        let s = ok_statements(parsed(".func bar1(p) 'p+1'\n"));
+        assert_eq!(
+            s[0],
+            Statement::Func(Func {
+                name: "bar1".into(),
+                args: vec!["p".into()],
+                body: "p+1".into(),
+                span: 1..2,
+            })
+        );
+    }
+
+    #[test]
     fn test_include() {
         let s = ok_statements(parsed(".include ./models.lib\n"));
         assert_eq!(s[0], Statement::Include("./models.lib".into(), 1..2));
@@ -1261,5 +1354,68 @@ mod tests {
         let s2 = ok_statements(parsed(".meas tran vout1 max v(1)\n"));
         assert!(matches!(s1[0], Statement::Analysis { .. }));
         assert!(matches!(s2[0], Statement::Analysis { .. }));
+    }
+
+    // --- Regression tests from real-file conformance testing ---
+    // (servers/core/tests/real_netlists.rs)
+
+    #[test]
+    fn test_control_block_content_not_misparsed_as_devices() {
+        // Confirmed against real ngspice test-suite netlists: `end`,
+        // `else`, `quit`, `echo ...` inside a .control block were being
+        // misparsed as device instances by first letter (end -> E-device/
+        // Vcvs, quit -> Q-device/Bjt) before this fix.
+        let src = ".control\nlet x = 1\nif x > 0\necho ok\nelse\necho bad\nend\nquit 0\n.endc\n";
+        let results = parsed(src);
+        for r in &results {
+            assert!(
+                r.is_ok(),
+                "control-block line produced a parse error: {r:?}"
+            );
+        }
+        // Every line inside the block (and the .control/.endc markers
+        // themselves) should come back as Unrecognized, not a bogus
+        // device instance or a hard error.
+        for r in &results {
+            match r {
+                Ok(Statement::Unrecognized(_, _)) => {}
+                other => {
+                    panic!("expected Unrecognized inside/around a .control block, got {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_control_block_exit_resumes_normal_parsing() {
+        let src = ".control\nrun\n.endc\nR1 1 2 100\n";
+        let results = ok_statements(parsed(src));
+        assert!(
+            matches!(results.last(), Some(Statement::ElementInstance(ei)) if ei.name == "R1"),
+            "parsing after .endc should resume as ordinary netlist statements, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_e_source_alternate_two_node_value_form() {
+        // `E1 out 0 VALUE={...}` — 2 nodes + VALUE=, not the classic
+        // 4-node form. Confirmed against real Xyce netlists; ngspice
+        // documents the equivalent vol=/value= forms (docs/GRAMMAR.md §5.2).
+        let s = ok_statements(parsed("E1 out 0 value={V(in)*2}\n"));
+        let ei = match &s[0] {
+            Statement::ElementInstance(ei) => ei,
+            other => panic!("expected element instance, got {other:?}"),
+        };
+        assert_eq!(ei.nodes, vec!["out", "0"]);
+    }
+
+    #[test]
+    fn test_e_source_classic_four_node_form_still_works() {
+        let s = ok_statements(parsed("E1 3 4 1 2 10.0\n"));
+        let ei = match &s[0] {
+            Statement::ElementInstance(ei) => ei,
+            other => panic!("expected element instance, got {other:?}"),
+        };
+        assert_eq!(ei.nodes, vec!["3", "4", "1", "2"]);
     }
 }
