@@ -783,31 +783,20 @@ epics:
   - id: CORE-15
     title: Global .subckt/.model name-uniqueness diagnostic
     area: symbols-uniqueness
-    status: blocked
-    blocked: >
-      2026-07-31. Discovered while fixing CORE-25 (unrelated task):
-      check_unique_names()'s `Statement::Subckt` branch in
-      servers/core/src/symbols/uniqueness.rs can never fire against the
-      REAL build_scope_tree() pipeline. build_scope_tree() (scope.rs)
-      consumes every `Statement::Subckt` into the Scope *tree structure*
-      itself (it becomes a child Scope's `kind`/`name`, pushed via
-      `stack.push(child)`) — the raw `Statement::Subckt` value is never
-      left behind in any scope's `.statements` list for
-      check_unique_names() to iterate over. So in real usage, two
-      identically-named `.subckt`s produce zero duplicate diagnostics.
-      This was masked because CORE-15's own test
-      (test_duplicate_subckt_names_flagged) builds its fixture via a
-      `scope_from_stmts(stmts)` helper that places raw `Statement::Subckt`
-      values directly into `.statements`, bypassing build_scope_tree()
-      entirely — a fixture shape that doesn't match what the real parser
-      pipeline ever produces. `.model` duplicate detection is NOT affected
-      (Model statements aren't consumed into the tree structure the way
-      Subckt is, confirmed via a new end-to-end test in
-      symbols::scope::tests::test_duplicate_name_across_two_files_caught_with_both_file_locations).
-      Fix needs: check_unique_names() must also walk `scope.children` and
-      check each child Scope's own `.name`/`.kind == Subckt` against the
-      same `seen` set, not just `scope.statements`. Out of scope for the
-      CORE-25 fix-blocked pass that found it — narrow, separate fix.
+    status: complete
+    review: >
+      Fixed and retested 2026-07-31. check_scope() in
+      servers/core/src/symbols/uniqueness.rs now also checks each child
+      Scope's own name (when kind == Subckt) against the same seen-names
+      set used for .statements entries — additive only, the existing
+      Statement::Subckt-in-.statements branch is untouched so the original
+      hand-built-fixture tests needed no changes. Added
+      test_duplicate_subckt_names_flagged_via_real_build_scope_tree_pipeline,
+      which goes through the actual build_scope_tree() parser pipeline
+      (not a hand-built fixture) as the regression guard for the bug — it
+      and all 6 original tests.acceptance tests pass.
+      Gate: cargo fmt clean, cargo clippy -D warnings clean, 361/361 cargo
+      test pass (0 ignored, full workspace).
     depends_on: [CORE-14]
     summary: >
       Implement the docs/GRAMMAR.md §6.1 rule "All subcircuit and model
