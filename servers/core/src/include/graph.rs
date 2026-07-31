@@ -121,6 +121,7 @@ pub fn resolve_includes(
         &mut statements,
         &mut diagnostics,
         &exec_dir,
+        true,
     );
 
     (statements, diagnostics)
@@ -136,6 +137,11 @@ fn resolve_file(
     statements: &mut Vec<(FileId, Statement)>,
     diagnostics: &mut Vec<IncludeDiagnostic>,
     top_level_dir: &Path,
+    // Only the top-level entry file has a mandatory title line (docs/
+    // GRAMMAR.md §1) — an `.include`d file is a pure snippet with no title
+    // line of its own; treating its first line as a title would eat a
+    // real statement. See parser::parse_document's doc comment.
+    is_entry: bool,
 ) {
     if visited.contains(&path.to_path_buf()) {
         let chain: Vec<String> = visited.iter().map(|p| p.display().to_string()).collect();
@@ -169,7 +175,11 @@ fn resolve_file(
     let base = source_map.assign_offset(file_id, line_count(&content));
 
     let processed = lexer::preprocess(&content, dialect);
-    let parsed = parser::parse(&processed, dialect);
+    let parsed = if is_entry {
+        parser::parse_document(&processed, dialect)
+    } else {
+        parser::parse(&processed, dialect)
+    };
 
     for result in parsed {
         let stmt = match result {
@@ -200,6 +210,7 @@ fn resolve_file(
                             statements,
                             diagnostics,
                             top_level_dir,
+                            false,
                         );
                     }
                     Err(e) => {
@@ -264,6 +275,7 @@ fn resolve_file(
                                 statements,
                                 diagnostics,
                                 top_level_dir,
+                                false,
                             );
                         }
                     }
@@ -293,20 +305,28 @@ mod tests {
     #[test]
     fn test_single_level_include_splices_statements_in_order() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/top.cir", "R1 1 2 100\n.include /sub.cir\nC1 3 0 1u\n");
+        // Entry file's first line is always its title (docs/GRAMMAR.md
+        // §1) — parser::parse_document turns it into a Statement::Comment
+        // rather than dropping it, so it still appears in `stmts` (as the
+        // first entry), same as any other Comment statement would.
+        fs.insert(
+            "/top.cir",
+            "top title\nR1 1 2 100\n.include /sub.cir\nC1 3 0 1u\n",
+        );
         fs.insert("/sub.cir", "R2 4 5 200\n");
 
         let mut sm = SourceMap::new();
         let (stmts, diags) =
             resolve_includes(Path::new("/top.cir"), &fs, Dialect::Ngspice, &mut sm);
         assert!(diags.is_empty());
-        assert_eq!(stmts.len(), 3);
+        // title Comment + R1 + R2 (spliced from sub.cir) + C1
+        assert_eq!(stmts.len(), 4);
     }
 
     #[test]
     fn test_direct_self_include_detected_not_hung() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/self.cir", ".include /self.cir\n");
+        fs.insert("/self.cir", "self title\n.include /self.cir\n");
 
         let mut sm = SourceMap::new();
         let (_stmts, diags) =
@@ -317,7 +337,7 @@ mod tests {
     #[test]
     fn test_transitive_include_cycle_detected_and_chain_named() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/a.cir", ".include /b.cir\n");
+        fs.insert("/a.cir", "a title\n.include /b.cir\n");
         fs.insert("/b.cir", ".include /c.cir\n");
         fs.insert("/c.cir", ".include /a.cir\n");
 
@@ -329,7 +349,7 @@ mod tests {
     #[test]
     fn test_missing_include_file_flagged_rest_of_document_still_resolves() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/top.cir", ".include /missing.cir\nR1 1 2 100\n");
+        fs.insert("/top.cir", "top title\n.include /missing.cir\nR1 1 2 100\n");
 
         let mut sm = SourceMap::new();
         let (stmts, diags) =
@@ -341,19 +361,24 @@ mod tests {
     #[test]
     fn test_nested_includes_resolve_transitively() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/a.cir", "R1 1 2 100\n.include /b.cir\n");
+        fs.insert("/a.cir", "a title\nR1 1 2 100\n.include /b.cir\n");
         fs.insert("/b.cir", "R2 3 4 200\n.include /c.cir\n");
         fs.insert("/c.cir", "R3 5 6 300\n");
 
         let mut sm = SourceMap::new();
         let (stmts, diags) = resolve_includes(Path::new("/a.cir"), &fs, Dialect::Ngspice, &mut sm);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-        assert_eq!(stmts.len(), 3, "expected R1, R2, R3 spliced in order");
+        // title Comment + R1 + R2 (from b.cir) + R3 (from c.cir)
+        assert_eq!(
+            stmts.len(),
+            4,
+            "expected title + R1, R2, R3 spliced in order"
+        );
         let names: Vec<String> = stmts
             .iter()
-            .map(|(_, s)| match s {
-                Statement::ElementInstance(ei) => ei.name.clone(),
-                other => format!("{other:?}"),
+            .filter_map(|(_, s)| match s {
+                Statement::ElementInstance(ei) => Some(ei.name.clone()),
+                _ => None,
             })
             .collect();
         assert_eq!(names, vec!["R1", "R2", "R3"]);
@@ -364,7 +389,7 @@ mod tests {
         let mut fs = FakeFileSystem::new();
         fs.insert(
             "/top.cir",
-            "R1 1 2 100\n.lib /parts.lib typical\nC1 3 0 1u\n",
+            "top title\nR1 1 2 100\n.lib /parts.lib typical\nC1 3 0 1u\n",
         );
         fs.insert(
             "/parts.lib",
@@ -377,9 +402,9 @@ mod tests {
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
         let names: Vec<String> = stmts
             .iter()
-            .map(|(_, s)| match s {
-                Statement::ElementInstance(ei) => ei.name.clone(),
-                other => format!("{other:?}"),
+            .filter_map(|(_, s)| match s {
+                Statement::ElementInstance(ei) => Some(ei.name.clone()),
+                _ => None,
             })
             .collect();
         // Only the "typical" section's R2 should be spliced in, not "fast"'s R3.
@@ -389,7 +414,10 @@ mod tests {
     #[test]
     fn test_lib_unresolvable_section_flagged() {
         let mut fs = FakeFileSystem::new();
-        fs.insert("/top.cir", ".lib /parts.lib nonexistent_section\n");
+        fs.insert(
+            "/top.cir",
+            "top title\n.lib /parts.lib nonexistent_section\n",
+        );
         fs.insert("/parts.lib", ".lib typical\nR2 7 8 500\n.endl typical\n");
 
         let mut sm = SourceMap::new();

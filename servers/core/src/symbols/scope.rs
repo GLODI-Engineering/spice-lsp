@@ -382,7 +382,12 @@ mod tests {
         use std::path::Path;
 
         let mut fs = FakeFileSystem::new();
-        fs.insert("/top.cir", ".model dup npn (bf=100)\n.include /sub.cir\n");
+        // Entry file's first line is always its title (docs/GRAMMAR.md
+        // §1); the included file has no title line of its own.
+        fs.insert(
+            "/top.cir",
+            "top title\n.model dup npn (bf=100)\n.include /sub.cir\n",
+        );
         fs.insert("/sub.cir", ".model dup npn (bf=50)\n");
 
         let mut sm = SourceMap::new();

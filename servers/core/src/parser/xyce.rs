@@ -191,17 +191,33 @@ fn parse_options_xyce(line: &str, span: LineSpan, subckt_depth: u32) -> ParseRes
         });
     }
     let first = tokens[0];
+    // Full package catalog per docs/GRAMMAR.md §6.4 (confirmed against the
+    // Xyce Reference Guide). The original list here only had 9 of these —
+    // real Xyce netlists commonly use NONLIN-TRAN/NONLIN-HB, LINSOL-HB/AC,
+    // DIAGNOSTIC, RESTART, etc., all of which were previously rejected.
     let is_known_pkg = matches!(
         first.to_uppercase().as_str(),
         "DEVICE"
+            | "DIAGNOSTIC"
             | "TIMEINT"
             | "NONLIN"
+            | "NONLIN-TRAN"
+            | "NONLIN-HB"
+            | "LOCA"
             | "LINSOL"
+            | "LINSOL-HB"
+            | "LINSOL-AC"
             | "OUTPUT"
-            | "PARSER"
+            | "RESTART"
+            | "SAMPLES"
+            | "EMBEDDEDSAMPLES"
+            | "PCES"
             | "SENSITIVITY"
             | "HBINT"
+            | "DIST"
+            | "FFT"
             | "MEASURE"
+            | "PARSER"
     );
     if is_known_pkg {
         let package = Some(first.to_string());
@@ -292,6 +308,16 @@ fn resolve_y_type(name: &str) -> Option<DeviceKind> {
     }
 }
 
+fn is_behavioral_source_form(tokens: &[&str]) -> bool {
+    tokens
+        .get(2)
+        .map(|t| {
+            let u = t.to_uppercase();
+            u.starts_with("VALUE") || u.starts_with("TABLE") || u.starts_with("POLY")
+        })
+        .unwrap_or(false)
+}
+
 fn split_nodes_params_xyce(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -> NodeParamsResult {
     let min = kind.min_nodes();
 
@@ -308,6 +334,16 @@ fn split_nodes_params_xyce(tokens: &[&str], kind: DeviceKind, span: &LineSpan) -
                     span: span.clone(),
                 });
             }
+            let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
+            let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
+            Ok((nodes, params, None))
+        }
+        DeviceKind::Vcvs | DeviceKind::Vccs if is_behavioral_source_form(tokens) => {
+            // Alternate 2-node behavioral form: `E/G n+ n- VALUE={...}` /
+            // `TABLE {...} = (...)` / `POLY(N) ...`, distinct from the
+            // classic 4-node form `E/G n+ n- nc+ nc- gain`. Confirmed
+            // against real Xyce test netlists, e.g.
+            // `G_I 0 vi VALUE={KI*V(verr)*V(windup_en)}`.
             let nodes: Vec<String> = tokens[..2].iter().map(|s| s.to_string()).collect();
             let params: Vec<String> = tokens[2..].iter().map(|s| s.to_string()).collect();
             Ok((nodes, params, None))
@@ -471,20 +507,14 @@ fn parse_ends(line: &str, span: LineSpan) -> ParseResult {
 
 fn parse_model(line: &str, span: LineSpan) -> ParseResult {
     let rest = line[".model".len()..].trim();
-    let tokens: Vec<&str> = rest.splitn(3, |c: char| c.is_whitespace()).collect();
-
-    if tokens.len() < 2 {
-        return Err(ParseError {
-            message: ".model requires name and type".into(),
-            span,
-        });
-    }
-
-    let model_type = tokens[1].to_string();
-    let raw_params = if tokens.len() > 2 {
-        tokens[2].to_string()
-    } else {
-        String::new()
+    let (name, model_type, raw_params) = match super::split_model_name_type_params(rest) {
+        Some(t) => t,
+        None => {
+            return Err(ParseError {
+                message: ".model requires name and type".into(),
+                span,
+            })
+        }
     };
 
     if let Err(msg) = validate_xyce_model_params(&raw_params) {
@@ -492,7 +522,7 @@ fn parse_model(line: &str, span: LineSpan) -> ParseResult {
     }
 
     Ok(Statement::Model(Model {
-        name: tokens[0].to_string(),
+        name,
         model_type,
         raw_params,
         span,
@@ -502,6 +532,20 @@ fn parse_model(line: &str, span: LineSpan) -> ParseResult {
 fn validate_xyce_model_params(raw: &str) -> Result<(), String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    if !trimmed.contains('(') && !trimmed.contains(')') {
+        // Bare space-separated params with no parentheses at all are also
+        // legal Xyce syntax (parentheses are optional, not required) —
+        // confirmed against real Xyce test-suite netlists, e.g.
+        // `.model mrm1 memristor level=3 a1=0.17 a2=0.17 b=0.05`. Only the
+        // comma-separated-list restriction still applies here.
+        if trimmed.contains(',') {
+            return Err(
+                "Xyce .model rejects comma-separated parameter lists (PSpice-incompatible)".into(),
+            );
+        }
         return Ok(());
     }
 
@@ -1040,6 +1084,36 @@ mod tests {
     }
 
     #[test]
+    fn test_xyce_options_full_package_catalog_accepted() {
+        // Confirmed against real Xyce netlists: NONLIN-TRAN and others
+        // were previously rejected, though docs/GRAMMAR.md §6.4 documents
+        // the full catalog.
+        for pkg in [
+            "TIMEINT",
+            "NONLIN-TRAN",
+            "NONLIN-HB",
+            "LOCA",
+            "LINSOL-HB",
+            "LINSOL-AC",
+            "DIAGNOSTIC",
+            "RESTART",
+            "SAMPLES",
+            "EMBEDDEDSAMPLES",
+            "PCES",
+            "DIST",
+            "FFT",
+        ] {
+            let src = format!(".options {pkg} foo=1\n");
+            let results = parsed(&src);
+            assert!(
+                results[0].is_ok(),
+                "{pkg} should be a known Xyce .options package, got {:?}",
+                results[0]
+            );
+        }
+    }
+
+    #[test]
     fn test_xyce_options_missing_package_keyword_flagged() {
         let results = parsed(".options reltol=1e-3\n");
         assert!(
@@ -1167,5 +1241,67 @@ mod tests {
         let s2 = ok_statements(parsed(".meas tran vout1 max v(1)\n"));
         assert!(matches!(s1[0], Statement::Analysis { .. }));
         assert!(matches!(s2[0], Statement::Analysis { .. }));
+    }
+
+    // --- Regression tests from real-file conformance testing ---
+    // (servers/core/tests/real_netlists.rs)
+
+    #[test]
+    fn test_model_glued_type_paren() {
+        let s = ok_statements(parsed(".model D_IDEAL D(IS=1e-14 N=1 RS=10m)\n"));
+        assert_eq!(
+            s[0],
+            Statement::Model(Model {
+                name: "D_IDEAL".into(),
+                model_type: "D".into(),
+                raw_params: "(IS=1e-14 N=1 RS=10m)".into(),
+                span: 1..2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_model_no_parens_at_all_is_legal() {
+        // Parentheses are optional in Xyce, not required — confirmed
+        // against real Xyce test netlists, e.g.
+        // `.model mrm1 memristor level=3 a1=0.17 a2=0.17`.
+        let s = ok_statements(parsed(".model mrm1 memristor level=3 a1=0.17\n"));
+        assert_eq!(
+            s[0],
+            Statement::Model(Model {
+                name: "mrm1".into(),
+                model_type: "memristor".into(),
+                raw_params: "level=3 a1=0.17".into(),
+                span: 1..2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_model_no_parens_comma_still_rejected() {
+        let results = parsed(".model mrm1 memristor level=3, a1=0.17\n");
+        assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn test_g_source_alternate_two_node_value_form() {
+        // `G_I 0 vi VALUE={...}` — confirmed against real Xyce netlists
+        // (boost_pid_xyce.cir), distinct from the classic 4-node form.
+        let s = ok_statements(parsed("G_I 0 vi VALUE={KI*V(verr)*V(windup_en)}\n"));
+        let ei = match &s[0] {
+            Statement::ElementInstance(ei) => ei,
+            other => panic!("expected element instance, got {other:?}"),
+        };
+        assert_eq!(ei.nodes, vec!["0", "vi"]);
+    }
+
+    #[test]
+    fn test_g_source_classic_four_node_form_still_works() {
+        let s = ok_statements(parsed("G1 3 4 1 2 0.001\n"));
+        let ei = match &s[0] {
+            Statement::ElementInstance(ei) => ei,
+            other => panic!("expected element instance, got {other:?}"),
+        };
+        assert_eq!(ei.nodes, vec!["3", "4", "1", "2"]);
     }
 }
