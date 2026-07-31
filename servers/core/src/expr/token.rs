@@ -1,33 +1,68 @@
+//! Tokenizes raw expression text (a `.PARAM` value, a behavioral-source
+//! equation, ...) into a flat [`Token`] stream — entry point [`tokenize`].
+//! This runs before any of the dialect-specific expression parsers in
+//! [`crate::expr`]; it does not itself apply operator precedence or
+//! grammar structure, only lexical splitting, including dialect-sensitive
+//! numeric unit-suffix parsing (`X` means ×1e6 in Xyce but is not a suffix
+//! in ngspice, and vice versa for `a`/×1e-18 — see [`parse_scale_suffix`]).
+
 use crate::dialect::Dialect;
 
+/// A [`Token`] paired with its byte offset into the original input, for
+/// error reporting.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
+    /// The token itself.
     pub token: Token,
+    /// The byte offset in the input where this token starts.
     pub offset: usize,
 }
 
+/// A single lexical token in a SPICE expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
+    /// A numeric literal, with an optional unit-suffix string as written
+    /// (e.g. `Some("k")` for `10k`).
     Number(f64, Option<String>),
+    /// A bare identifier (parameter name, function name, or `V`/`I`/`N`
+    /// reference name before it's recognized as such by the parser).
     Ident(String),
+    /// A quoted string literal, with the surrounding quotes stripped.
     StringLit(String),
+    /// An operator, kept as its literal source text (e.g. `"+"`, `"**"`).
     Op(String),
+    /// `(`
     LParen,
+    /// `)`
     RParen,
+    /// `{`
     LBrace,
+    /// `}`
     RBrace,
+    /// `,`
     Comma,
+    /// `?` (ternary)
     Question,
+    /// `:` (ternary, or Xyce's node-path separator)
     Colon,
+    /// `=`
     Equals,
 }
 
+/// A lexical error: a malformed number, an unterminated string literal, or
+/// similar. Carries the byte offset into the input where the problem was
+/// found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The byte offset in the input where the problem was found.
     pub offset: usize,
 }
 
+/// Tokenize `input` into a flat [`SpannedToken`] stream. `dialect` affects
+/// only numeric unit-suffix interpretation (see module docs); it does not
+/// change which characters are recognized as operators/punctuation.
 pub fn tokenize(input: &str, _dialect: Dialect) -> Result<Vec<SpannedToken>, TokenError> {
     let chars: Vec<char> = input.chars().collect();
     let mut pos = 0;

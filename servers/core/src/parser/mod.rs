@@ -1,21 +1,44 @@
+//! Turns preprocessed lines ([`crate::lexer::preprocess`]'s output) into
+//! [`Statement`]s. Two entry points: [`parse`] for an arbitrary statement
+//! fragment, [`parse_document`] for a complete real netlist file (handles
+//! the mandatory title line). Dialect-specific parsing logic lives in
+//! [`ngspice`] and [`xyce`]; this module dispatches to whichever one
+//! matches the requested [`Dialect`] plus holds the shared [`ParseError`]/
+//! [`ParseResult`] types.
+
 use crate::ast::{LineSpan, Statement};
 use crate::dialect::Dialect;
 use crate::lexer::ProcessedLine;
 
+/// ngspice-dialect statement parsing.
 pub mod ngspice;
+/// Xyce-dialect statement parsing.
 pub mod xyce;
 
+/// A statement that failed to parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// Where in the source the offending statement is.
     pub span: LineSpan,
 }
 
+/// The result of parsing one logical line: the recognized [`Statement`],
+/// or a [`ParseError`] if it couldn't be parsed.
 pub type ParseResult = Result<Statement, ParseError>;
 
+/// The result of splitting a device/subcircuit instance's trailing text
+/// into (nodes, raw parameters, optional subcircuit name), or a
+/// [`ParseError`] if the split failed.
 pub type NodeParamsResult =
     std::result::Result<(Vec<String>, Vec<String>, Option<String>), ParseError>;
 
+/// Parse `lines` as a sequence of ordinary statements — no title-line
+/// handling, every line is parsed as statement content. Use this for a
+/// fragment of a netlist (a single device line, a `.subckt` body, an
+/// included file's contents). For a whole real netlist file starting from
+/// its true first physical line, use [`parse_document`] instead.
 pub fn parse(lines: &[ProcessedLine], dialect: Dialect) -> Vec<ParseResult> {
     match dialect {
         Dialect::Ngspice => ngspice::parse(lines),

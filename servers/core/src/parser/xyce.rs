@@ -4,6 +4,7 @@ use crate::ast::*;
 use crate::dialect::{DeviceKind, Dialect};
 use crate::lexer::ProcessedLine;
 
+/// Parse `lines` under Xyce statement syntax.
 pub fn parse(lines: &[ProcessedLine]) -> Vec<ParseResult> {
     let mut results = Vec::new();
     let mut subckt_depth = 0u32;

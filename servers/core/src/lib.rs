@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! `spice_core` — a dialect-agnostic parser and symbol-resolution engine
 //! for SPICE-family circuit netlists (ngspice and Xyce today; LTspice
 //! planned once reference documentation is available).

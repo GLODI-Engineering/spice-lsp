@@ -1,10 +1,20 @@
+//! Xyce's expression grammar, used for both `.PARAM` definitions and
+//! behavioral-source equations — unlike ngspice, Xyce doesn't split
+//! compile-time and runtime expression grammars. Entry point:
+//! [`parse_xyce`]. Xyce-specific source forms (`TABLE()`, polynomial
+//! sources) that don't fit this general grammar live in
+//! [`crate::expr::xyce_sources`].
+
 use crate::dialect::Dialect;
 use crate::expr::ast::*;
 use crate::expr::token::*;
 
+/// An expression that failed to parse under Xyce's grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The byte offset in the input where the problem was found.
     pub offset: usize,
 }
 
@@ -258,10 +268,13 @@ const BUILTINS: &[&str] = &[
     "BLI",
 ];
 
+/// Returns whether `name` (case-insensitive) is a built-in function name in
+/// Xyce's expression grammar.
 pub fn is_builtin(name: &str) -> bool {
     BUILTINS.contains(&name.to_uppercase().as_str())
 }
 
+/// Tokenizes and parses `input` as a Xyce expression.
 pub fn parse_xyce(input: &str) -> Result<Expr> {
     let tokens = tokenize(input, Dialect::Xyce).map_err(|e| ParseError {
         message: e.message,

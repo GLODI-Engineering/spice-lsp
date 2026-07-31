@@ -1,14 +1,33 @@
+//! Checks the docs/GRAMMAR.md §6.1 rule "all subcircuit and model names
+//! are considered global and must be unique" — [`check_unique_names`] is
+//! the entry point.
+
 use crate::ast::{LineSpan, Statement};
 use crate::symbols::scope::{Scope, ScopeKind};
 
+/// A duplicate `.subckt` or `.model` name, found by [`check_unique_names`].
+/// Subcircuit and model names share one global namespace (docs/
+/// GRAMMAR.md §6.1), so a `.subckt` and a `.model` with the same name
+/// collide too, not just two of the same statement kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DuplicateDiagnostic {
+    /// A human-readable message naming the duplicate and both locations.
     pub message: String,
+    /// The colliding name, uppercased (name comparison is
+    /// case-insensitive, matching both dialects).
     pub name: String,
+    /// Where the first (non-duplicate) definition is.
     pub first_span: LineSpan,
+    /// Where the duplicate definition is.
     pub duplicate_span: LineSpan,
 }
 
+/// Find every duplicate `.subckt`/`.model` name in `scope_tree`, checked
+/// case-insensitively across the whole tree (not just within one scope —
+/// per docs/GRAMMAR.md §6.1, these names are global regardless of
+/// nesting). Model names following the model-binning convention
+/// (`basename.1`, `basename.2`, ... keyed by `lmin`/`lmax`/`wmin`/`wmax`)
+/// are recognized and exempted from the duplicate check.
 pub fn check_unique_names(scope_tree: &Scope) -> Vec<DuplicateDiagnostic> {
     let mut diagnostics = Vec::new();
     let mut seen: Vec<(String, String, LineSpan)> = Vec::new();

@@ -94,13 +94,32 @@ fn remap_statement_span(stmt: Statement, offset: usize) -> Statement {
     }
 }
 
+/// A problem found while resolving `.include`/`.lib` statements: an
+/// unresolvable path, a circular include chain, or an unresolvable `.lib`
+/// section. Produced by [`resolve_includes`]; the rest of the document is
+/// still resolved as far as possible even when one of these is emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncludeDiagnostic {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The file the offending `.include`/`.lib` statement is in.
     pub file: FileId,
+    /// Where in that file the statement is.
     pub span: crate::ast::LineSpan,
 }
 
+/// Parse `entry_path` and every file it transitively pulls in via
+/// `.include`/`.lib`, merging them into a single ordered list of
+/// `(FileId, Statement)` pairs. `entry_path` is parsed with
+/// [`parser::parse_document`] (mandatory title line stripped); every
+/// included file is parsed with [`parser::parse`] (no title line expected).
+/// Registers every visited file with `source_map` and assigns each a
+/// disjoint virtual-line-number block (see
+/// [`crate::include::source_map::SourceMap::assign_offset`]) so statement
+/// spans stay traceable back to their real file and line via
+/// [`crate::include::source_map::SourceMap::resolve_virtual_line`].
+/// Circular includes are detected and reported as an [`IncludeDiagnostic`]
+/// rather than infinite-looping.
 pub fn resolve_includes(
     entry_path: &Path,
     fs: &dyn FileSystem,

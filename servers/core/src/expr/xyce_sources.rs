@@ -1,9 +1,17 @@
+//! Special-form parsing for Xyce source syntax that doesn't fit
+//! [`crate::expr::xyce`]'s general expression grammar: `TABLE()`
+//! piecewise-linear sources ([`parse_xyce_table`]) and polynomial `E`/`G`/
+//! `F`/`H` sources ([`parse_poly_e_g`]/[`parse_poly_f_h`]).
+
 use crate::expr::ast::*;
 use crate::expr::xyce;
 
+/// A Xyce special-form source expression that failed to parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The byte offset in the input where the problem was found.
     pub offset: usize,
 }
 
@@ -22,6 +30,9 @@ fn table_expr_to_pairs(expr: &Expr) -> Vec<(Expr, Expr)> {
     pairs
 }
 
+/// Parses a Xyce `TABLE(control_expr) = (x1, y1), (x2, y2), ...`
+/// piecewise-linear source, returning the control expression plus the
+/// ordered list of `(x, y)` breakpoint pairs.
 pub fn parse_xyce_table(input: &str) -> Result<(Expr, Vec<(Expr, Expr)>)> {
     let trimmed = input.trim();
 
@@ -194,6 +205,10 @@ fn parse_table_pair_list(input: &str) -> Result<(Vec<(Expr, Expr)>, usize)> {
     Ok((pairs, pos))
 }
 
+/// Parses a polynomial `E`/`G`-source (voltage/current-controlled)
+/// expression body. `_n_vars` (the declared number of controlling
+/// variables) is currently unused — the underlying grammar is Xyce's
+/// general expression grammar, parsed the same way regardless of arity.
 pub fn parse_poly_e_g(_n_vars: usize, input: &str) -> Result<Expr> {
     let trimmed = input.trim();
     xyce::parse_xyce(trimmed).map_err(|e| ParseError {
@@ -202,6 +217,10 @@ pub fn parse_poly_e_g(_n_vars: usize, input: &str) -> Result<Expr> {
     })
 }
 
+/// Parses a polynomial `F`/`H`-source (current/voltage-controlled)
+/// expression body. `_n_vars` (the declared number of controlling
+/// variables) is currently unused, for the same reason as
+/// [`parse_poly_e_g`].
 pub fn parse_poly_f_h(_n_vars: usize, input: &str) -> Result<Expr> {
     let trimmed = input.trim();
     xyce::parse_xyce(trimmed).map_err(|e| ParseError {
@@ -210,6 +229,10 @@ pub fn parse_poly_f_h(_n_vars: usize, input: &str) -> Result<Expr> {
     })
 }
 
+/// Returns whether `name` (case-insensitive) is one of Xyce's table/
+/// spline-style source functions (`TABLE`, `TABLEFILE`, `FASTTABLE`,
+/// `SPLINE`, `CUBIC`, `WODICKA`, `BLI`) that load or interpolate external
+/// data rather than evaluating a plain expression.
 pub fn is_file_load_function(name: &str) -> bool {
     matches!(
         name.to_uppercase().as_str(),

@@ -1,31 +1,51 @@
+//! Dialect-specific search order for resolving an `.include`/`.lib`
+//! filename to an actual path on disk (or in a [`FileSystem`] test double).
+//! Entry point: [`resolve_include_path`].
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::dialect::Dialect;
 
+/// An `.include`/`.lib` filename that couldn't be resolved to a real path
+/// under any of the dialect's search locations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathDiagnostic {
+    /// A human-readable message naming the unresolvable file.
     pub message: String,
+    /// The filename as written in the netlist (quotes stripped).
     pub filename: String,
+    /// Every candidate path that was tried, in search order — useful for
+    /// showing the user why resolution failed.
     pub tried: Vec<String>,
 }
 
+/// Filesystem abstraction so include resolution can be tested without
+/// touching real disk. Implement this for a real filesystem in an embedder;
+/// [`FakeFileSystem`] is the in-memory implementation used by this crate's
+/// own tests.
 pub trait FileSystem {
+    /// Returns whether `path` exists.
     fn exists(&self, path: &Path) -> bool;
+    /// Reads the full contents of `path` as a UTF-8 string.
     fn read_to_string(&self, path: &Path) -> std::io::Result<String>;
 }
 
+/// An in-memory [`FileSystem`] for tests: a fixed map of paths to file
+/// contents, populated with [`FakeFileSystem::insert`].
 pub struct FakeFileSystem {
     files: HashMap<PathBuf, String>,
 }
 
 impl FakeFileSystem {
+    /// Creates an empty fake filesystem with no files.
     pub fn new() -> Self {
         FakeFileSystem {
             files: HashMap::new(),
         }
     }
 
+    /// Adds a file at `path` with the given `content`.
     pub fn insert(&mut self, path: impl Into<PathBuf>, content: impl Into<String>) {
         self.files.insert(path.into(), content.into());
     }
@@ -50,6 +70,19 @@ impl FileSystem for FakeFileSystem {
     }
 }
 
+/// Resolve `raw_filename` (as written after `.include`/`.lib`, possibly
+/// quoted) to an actual path, trying locations in the dialect's search
+/// order:
+///
+/// - **ngspice**: relative to `including_file_dir`, then each entry in
+///   `_sourcepath_entries` (the `.options searchdir=...`/`SOURCEPATH`
+///   list).
+/// - **Xyce**: relative to `including_file_dir`, then `top_level_dir` (the
+///   directory of the top-level netlist), then `exec_dir` (the current
+///   working directory).
+///
+/// Returns the first candidate that exists, or a [`PathDiagnostic`] listing
+/// every path tried if none exist.
 pub fn resolve_include_path(
     fs: &dyn FileSystem,
     including_file_dir: &Path,

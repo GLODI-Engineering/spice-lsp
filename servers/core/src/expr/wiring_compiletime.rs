@@ -1,3 +1,13 @@
+//! Walks a [`Scope`] tree and parses every compile-time expression it
+//! contains — `.param`/`.global_param` values, `.func` bodies, `.subckt`
+//! default-parameter values, and brace-wrapped `.model` parameter
+//! expressions — using the dialect-appropriate compile-time grammar
+//! ([`crate::expr::ngspice_compiletime`] or [`crate::expr::xyce`]). This is
+//! what turns the raw parameter text still sitting in [`crate::ast`]
+//! statements into actual [`Expr`] trees ready for lints
+//! ([`crate::expr::diagnostics`]) or symbol resolution. Entry point:
+//! [`wire_compiletime_expressions`].
+
 use crate::ast::*;
 use crate::dialect::Dialect;
 use crate::expr::ast::Expr;
@@ -5,12 +15,22 @@ use crate::expr::ngspice_compiletime;
 use crate::expr::xyce;
 use crate::symbols::scope::Scope;
 
+/// A compile-time expression's parse outcome: either the parsed [`Expr`],
+/// or an error message if it failed to parse.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WiredExpr {
+    /// The parsed expression, if parsing succeeded.
     pub expr: Option<Expr>,
+    /// A human-readable parse-error message, if parsing failed.
     pub error: Option<String>,
 }
 
+/// Parse every compile-time expression in `scope_tree` (recursively,
+/// through every child scope) under `dialect`'s compile-time grammar.
+/// Returns one `(span, parsed_expr, error)` entry per expression found —
+/// `parsed_expr` and `error` are mutually exclusive; a parse failure for
+/// one expression does not stop the rest of the document from being
+/// wired.
 pub fn wire_compiletime_expressions(
     scope_tree: &Scope,
     dialect: Dialect,

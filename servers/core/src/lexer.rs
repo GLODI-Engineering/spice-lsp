@@ -1,11 +1,34 @@
+//! Line-level preprocessing: strips comments, joins continuation lines
+//! (`+`-prefixed, and ngspice's `\`-suffixed physical-line continuation),
+//! and tracks which real source lines each resulting logical line came
+//! from. This always runs before [`crate::parser::parse`]/
+//! [`crate::parser::parse_document`] — the parser never sees raw,
+//! un-preprocessed source. Entry point: [`preprocess`].
+
 use crate::dialect::Dialect;
 
+/// One logical (post-continuation-joining) line of source, plus the real
+/// 1-based line number(s) it was assembled from — used to attribute
+/// diagnostics back to the actual source line(s) a joined statement came
+/// from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessedLine {
+    /// The joined, comment-stripped text of this logical line.
     pub text: String,
+    /// The real 1-based source line number(s) this logical line was
+    /// assembled from, in order. More than one entry when continuation
+    /// lines (`+` or `\`) were joined into it.
     pub source_lines: Vec<usize>,
 }
 
+/// Split `source` into logical lines: full-line comments (`*`) become
+/// empty [`ProcessedLine`]s (position preserved, not dropped), end-of-line
+/// comments are stripped per-dialect (`$`/`//` for ngspice, `;` for Xyce),
+/// and continuation lines are joined onto the previous logical line —
+/// `+`-prefixed continuations in both dialects, plus ngspice's trailing-`\`
+/// physical-line continuation (not honored on `.title`/`.lib`/`.include`
+/// lines, since those may legitimately contain a literal trailing
+/// backslash in a path or title).
 pub fn preprocess(source: &str, dialect: Dialect) -> Vec<ProcessedLine> {
     let physical_lines: Vec<&str> = source.lines().collect();
     let mut result: Vec<ProcessedLine> = Vec::new();

@@ -1,15 +1,34 @@
+//! Resolves identifiers inside a parsed expression tree against a set of
+//! known-defined parameter names, producing "undefined parameter"
+//! diagnostics — [`resolve_expr_idents`] is the entry point. Built-in
+//! function names, reserved special variables (`time`/`temper`/`hertz` in
+//! ngspice; `TIME`/`FREQ`/`TEMP`/`VT`/`GMIN` in Xyce), and identifiers
+//! that are really node/device names inside a `V()`/`I()`/`N()` reference
+//! are all correctly excluded — see `resolve_in_expr`'s match arms.
+
 use crate::dialect::Dialect;
 use crate::expr::ast::*;
 use crate::expr::ngspice_compiletime;
 use crate::expr::ngspice_runtime;
 use crate::expr::xyce;
 
+/// An identifier inside an expression that doesn't resolve to any known
+/// parameter, built-in function, or reserved special variable. Found by
+/// [`resolve_expr_idents`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentDiagnostic {
+    /// A human-readable message naming the undefined identifier.
     pub message: String,
+    /// The undefined identifier itself.
     pub name: String,
 }
 
+/// Walk `expr` and flag every `Ident` that isn't in `defined_params`, a
+/// known built-in function name for `dialect`, or a reserved special
+/// variable for `dialect`. Identifiers inside a `V()`/`I()`/`N()`
+/// [`Expr::Reference`] are node/device names, not parameter names, and are
+/// never flagged here — resolving those against the circuit's node set is
+/// a separate concern this function doesn't attempt.
 pub fn resolve_expr_idents(
     expr: &Expr,
     dialect: Dialect,

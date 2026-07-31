@@ -1,10 +1,20 @@
+//! ngspice's runtime/behavioral-source expression grammar — used inside
+//! `B`-element and `E`/`G` POLY behavioral-source equations, where
+//! additional built-in functions and reserved special variables (`time`,
+//! `temper`, `hertz`) are available that don't exist in
+//! [`crate::expr::ngspice_compiletime`]'s `.PARAM`-only grammar. Entry
+//! point: [`parse_ngspice_runtime`].
+
 use crate::dialect::Dialect;
 use crate::expr::ast::*;
 use crate::expr::token::*;
 
+/// An expression that failed to parse under ngspice's runtime grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The byte offset in the input where the problem was found.
     pub offset: usize,
 }
 
@@ -277,6 +287,8 @@ impl Parser {
     }
 }
 
+/// Tokenizes and parses `input` as an ngspice runtime/behavioral-source
+/// expression.
 pub fn parse_ngspice_runtime(input: &str) -> Result<Expr> {
     let tokens = tokenize(input, Dialect::Ngspice).map_err(|e| ParseError {
         message: e.message,
@@ -325,6 +337,8 @@ const RUNTIME_BUILTINS: &[&str] = &[
     "LIMIT",
 ];
 
+/// Returns whether `name` (case-insensitive) is a built-in function name in
+/// ngspice's runtime/behavioral-source expression grammar.
 pub fn is_builtin(name: &str) -> bool {
     RUNTIME_BUILTINS.contains(&name.to_uppercase().as_str())
 }

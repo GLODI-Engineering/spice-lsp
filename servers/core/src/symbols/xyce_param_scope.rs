@@ -1,33 +1,85 @@
+//! Xyce's `.param`/`.global_param` scoping (docs/GRAMMAR.md §4.2):
+//! top-level `.param`/`.model`/`.func` are visible everywhere; a
+//! subcircuit-local `.param` is visible only within that subcircuit and
+//! ones nested inside it. Deliberately **not** the same shadow-then-
+//! restore model [`crate::symbols::ngspice_param_scope`] implements for
+//! ngspice — Xyce has no documented "local copy created when reassigning
+//! a global name" mechanic, just plain lexical scoping. `.global_param`
+//! is a stricter, separate mechanism: a flat namespace with no nesting
+//! behavior at all, top-level-declaration-only, and (unlike `.param`)
+//! never legal to redefine across hierarchy levels — see
+//! [`collect_xyce_global_params`] and [`check_xyce_param_redefinitions`].
+
 use crate::ast::Statement;
 use crate::symbols::scope::Scope;
 
+/// One `.param` (or `.subckt` formal-parameter) binding in Xyce's scope
+/// model, tagged with the scope depth it was declared at. Produced by
+/// [`build_xyce_param_scope_chain`], looked up via
+/// [`resolve_xyce_param_ident`]. Unlike ngspice's
+/// [`crate::symbols::ngspice_param_scope::ParamBinding`], lookup here is
+/// scoped by a specific scope *identity* (see
+/// [`resolve_xyce_param_ident`]'s `scope_id`), not just depth — because
+/// Xyce siblings at the same depth must not see each other's bindings,
+/// while ngspice's depth-only model doesn't need that distinction the
+/// same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XyceParamBinding {
+    /// The parameter name, uppercased (lookups are case-insensitive).
     pub name: String,
+    /// The raw (unparsed) default/assigned value, if any.
     pub value: Option<String>,
+    /// The [`Scope::depth`] this binding was declared at.
     pub scope_depth: u32,
 }
 
+/// One `.global_param` declaration, found by [`collect_xyce_global_params`].
+/// Unlike [`XyceParamBinding`], this has no scope depth — `.global_param`
+/// is a flat namespace, resolvable identically regardless of where in the
+/// document the lookup originates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XyceGlobalParam {
+    /// The parameter name, uppercased.
     pub name: String,
+    /// The raw (unparsed) assigned value.
     pub value: Option<String>,
 }
 
+/// A `.param`/`.global_param` scoping problem, found by
+/// [`check_xyce_param_redefinitions`]. Severity varies by case — see
+/// [`Severity`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XyceParamDiagnostic {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The source line number the problem was found on.
     pub line: usize,
+    /// How serious this particular case is — see [`Severity`].
     pub severity: Severity,
 }
 
+/// How serious a [`XyceParamDiagnostic`] is. `.global_param` redefinition
+/// across hierarchy levels is always [`Severity::Error`] (illegal per
+/// docs/GRAMMAR.md §4.2); same-scope `.param` redefinition is only
+/// [`Severity::Info`] (last-definition-wins is tolerated, per the
+/// confirmed Xyce redefinition-tolerance finding — this is not an error
+/// case, just worth surfacing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    /// Worth surfacing in a hover/lint UI, but not a real problem.
     Info,
+    /// Suspicious but not confirmed illegal.
     Warning,
+    /// A confirmed violation of Xyce's scoping rules.
     Error,
 }
 
+/// Collect every `.param`/formal-parameter binding in `scope_tree`,
+/// grouped by a unique scope identity and depth. Feed the result into
+/// [`resolve_xyce_param_ident`] to look up a name from a given scope,
+/// respecting Xyce's downward-only lexical visibility (a sibling
+/// subcircuit's local `.param`s are never visible, unlike a simple
+/// depth-only model would allow).
 pub fn build_xyce_param_scope_chain(
     scope_tree: &Scope,
 ) -> Vec<(usize, u32, Vec<XyceParamBinding>)> {
@@ -77,6 +129,14 @@ fn collect_xyce_bindings(
     }
 }
 
+/// Look up `name` from the scope identified by `scope_id` (at
+/// `query_depth`), using `scope_chains` (the output of
+/// [`build_xyce_param_scope_chain`]). Checks that exact scope's own
+/// bindings first, then walks up through shallower-depth, lower-ID
+/// ancestor scopes — never sideways to a sibling scope at the same or
+/// deeper level, which is what makes this correctly Xyce's downward-only
+/// visibility rather than ngspice's depth-only shadowing. Returns `None`
+/// if `name` isn't bound anywhere reachable.
 pub fn resolve_xyce_param_ident(
     scope_chains: &[(usize, u32, Vec<XyceParamBinding>)],
     scope_id: usize,
@@ -110,6 +170,12 @@ pub fn resolve_xyce_param_ident(
     None
 }
 
+/// Collect every `.global_param` declaration anywhere in `scope_tree`.
+/// Unlike `.param` bindings, these have no depth/scope-identity structure
+/// to resolve against — a `.global_param` is visible identically from
+/// anywhere in the document (docs/GRAMMAR.md §4.2), so a flat list is all
+/// that's needed. Use [`check_xyce_param_redefinitions`] to detect illegal
+/// redefinition (more than one declaration of the same name, anywhere).
 pub fn collect_xyce_global_params(scope_tree: &Scope) -> Vec<XyceGlobalParam> {
     let mut globals = Vec::new();
     collect_global_params_in_scope(scope_tree, &mut globals);
@@ -132,6 +198,12 @@ fn collect_global_params_in_scope(scope: &Scope, globals: &mut Vec<XyceGlobalPar
     }
 }
 
+/// Find `.param`/`.global_param` redefinition problems in `scope_tree`.
+/// `.global_param` redefined anywhere (even at the same top-level scope)
+/// is a [`Severity::Error`] — docs/GRAMMAR.md §4.2 confirms this is
+/// stricter than plain `.param`, which tolerates same-scope redefinition
+/// (last-definition-wins), surfaced here as [`Severity::Info`] rather than
+/// treated as a hard error.
 pub fn check_xyce_param_redefinitions(scope_tree: &Scope) -> Vec<XyceParamDiagnostic> {
     let mut diagnostics = Vec::new();
     let mut seen_global: Vec<(String, usize)> = Vec::new();

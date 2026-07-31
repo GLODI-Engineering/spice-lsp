@@ -1,13 +1,36 @@
+//! Resolves `X`-element subcircuit calls against `.subckt` definitions —
+//! [`resolve_subckt_calls`] is the entry point. Covers three diagnostic
+//! categories: undefined subcircuit references, node-count mismatches
+//! between a call site and its definition, and circular subcircuit
+//! references (direct or transitive).
+
 use crate::ast::{LineSpan, Statement};
 use crate::dialect::Dialect;
 use crate::symbols::scope::{collect_subckt_definitions, Scope};
 
+/// A problem found resolving `X`-element subcircuit calls: an undefined
+/// reference, a node-count mismatch, a circular reference chain, or node
+/// `0` illegally appearing in a `.subckt`'s own external node list. See
+/// [`resolve_subckt_calls`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionDiagnostic {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// Where in the source the problem was found.
     pub span: LineSpan,
 }
 
+/// Resolve every `X`-element instance in `scope_tree` against the
+/// `.subckt` definitions available to it, per real SPICE `.subckt`
+/// semantics: resolution is a whole-document lookup, not order-sensitive
+/// — a call may reference a `.subckt` defined later in the same document
+/// (unlike `.param` evaluation, which is sequential).
+///
+/// `dialect` only affects the wording of circular-reference diagnostics:
+/// ngspice's `.subckt` expansion is pure textual substitution (docs/
+/// GRAMMAR.md §6.1), so a cycle is framed as "would not terminate during
+/// expansion" rather than a named error; Xyce documents an explicit
+/// circular-reference error, so that's how its diagnostic is worded.
 pub fn resolve_subckt_calls(scope_tree: &Scope, dialect: Dialect) -> Vec<ResolutionDiagnostic> {
     let mut diagnostics = Vec::new();
     let mut call_graph: Vec<(String, String)> = Vec::new();
