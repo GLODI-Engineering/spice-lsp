@@ -1,0 +1,32 @@
+* Buck converter electro-thermal approximation (Xyce)
+VIN vin 0 DC 24
+L1 vx vout 100u
+C1 vout 0 100u IC=0
+V_PWM pwm 0 PULSE(0 10 0 10n 10n 5u 10u)
+S1 vin vx pwm 0 SW_IDEAL
+D1 0 vx D_IDEAL
+
+* Thermal proxy node (degC as volts)
+B_PLOSS ploss 0 V={abs(V(vx)*I(L1))*0.15}
+G_T 0 tj VALUE={(25 + 30*V(ploss) - V(tj))/2m}
+C_T tj 0 1 IC=25
+R_T tj 0 1e12
+
+* Temperature-dependent load
+B_LOAD vout 0 I={V(vout)/(5*(1+0.004*(V(tj)-25)))}
+
+* Snubbers
+Rs vin vx 1k
+Cs vin vx 1n
+Rd 0 vx 1k
+Cd 0 vx 1n
+
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+
+.tran 20n 5m 0 20n UIC
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(pwm) I(L1) V(vx) V(tj) V(ploss)
+.end

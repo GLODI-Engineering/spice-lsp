@@ -1,0 +1,30 @@
+* Flyback Converter Xyce
+VIN vin 0 DC 24
+* Transformer represented by coupled inductors
+Lpri vin vx 100u
+Lsec vy 0 100u
+K1 Lpri Lsec 0.99
+C1 vout 0 100u IC=0
+R1 vout 0 10
+
+* PWM source (100kHz, 40% duty cycle)
+V_PWM pwm 0 PULSE(0 10 0 10n 10n 4u 10u)
+
+* Switch and Diode
+S1 vx 0 pwm 0 SW_IDEAL
+D1 vy vout D_IDEAL
+* Snubbers
+Rs vx 0 1k
+Cs vx 0 1n
+Rd vy vout 1k
+Cd vy vout 1n
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.tran 10n 2m 0 10n UIC
+
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(pwm) I(Lpri) I(Lsec) V(vx)
+.end

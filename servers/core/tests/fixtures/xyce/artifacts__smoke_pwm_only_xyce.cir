@@ -1,0 +1,12 @@
+* Smoke test for Xyce Verilog-A PWM plugin only
+
+VFS fs 0 DC 600k
+VTD td 0 DC 50n
+VPHI phi 0 DC 0.03
+
+Ydab_pwm_gate ypwm gate 0 fs phi td DUTY=0.5 VHI=10 TR=5n
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.tran 2n 10u 0 2n UIC
+.print tran FORMAT=PROBE V(phi) V(gate)
+.end

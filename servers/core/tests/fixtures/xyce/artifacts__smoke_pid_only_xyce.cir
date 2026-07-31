@@ -1,0 +1,17 @@
+* Smoke test for Xyce Verilog-A PID phase plugin only
+
+VFS fs 0 DC 600k
+VPREF pref 0 PWL(0 1000 40u 1000 41u 3000)
+VPMEAS pmeas 0 PWL(0 1000 60u 1000 61u 3000)
+
+Ydab_pid_integrator yint pint 0 pref pmeas phi
+CINT pint 0 1 IC=0
+RINT pint 0 1e12
+Ydab_pid_phase ypid phi 0 pref pmeas pint fs KP=4e-6 KI=3 FFSCALE=0.32 CDRIVE=1.5e-6
+Rphi phi 0 1e12
+Cphi phi 0 1f IC=0.01
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.tran 2n 90u 0 2n UIC
+.print tran FORMAT=PROBE V(pref) V(pmeas) V(pint) V(phi)
+.end
