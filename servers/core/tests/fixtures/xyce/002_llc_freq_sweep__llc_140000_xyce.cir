@@ -1,0 +1,52 @@
+* LLC Resonant Converter Xyce
+VIN vin 0 DC 400
+
+* Half-Bridge Inverter
+S1 vin vx pwm 0 SW_IDEAL
+S2 vx 0 pwm_inv 0 SW_IDEAL
+
+* Snubbers
+Rs1 vin vx 1k
+Cs1 vin vx 1n
+Rs2 vx 0 1k
+Cs2 vx 0 1n
+
+* Resonant Tank
+Cr vx vr 22n
+Lr vr vp 100u
+Lm vp 0 400u
+
+* Transformer
+Lpri vp 0 1000u
+Lsec1 vy 0 10u
+Lsec2 0 vz 10u
+K1 Lpri Lsec1 0.99
+K2 Lpri Lsec2 0.99
+K3 Lsec1 Lsec2 0.99
+
+* Rectifier and Output Filter
+D1 vy vout D_IDEAL
+D2 vz vout D_IDEAL
+* Secondary Snubbers
+Rd1 vy vout 1k
+Cd1 vy vout 1n
+Rd2 vz vout 1k
+Cd2 vz vout 1n
+
+Cout vout 0 470u IC=0
+Rout vout 0 20
+
+* PWM sources (100kHz, ~50% duty cycle with dead time)
+V_PWM pwm 0 PULSE(0 10 0 10n 10n 3.42857143e-06 7.14285714e-06)
+V_PWM_INV pwm_inv 0 PULSE(0 10 3.57142857e-06 10n 10n 3.42857143e-06 7.14285714e-06)
+
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+
+.tran 10n 1m 0 10n UIC
+
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(pwm) V(pwm_inv) I(Lr) V(vx) I(Lpri)
+.end

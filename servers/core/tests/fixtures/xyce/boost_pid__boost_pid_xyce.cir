@@ -1,0 +1,55 @@
+* Boost Converter with PI Control (Xyce)
+VIN vin 0 DC 12
+L1 vin vx 100u
+C1 vout 0 100u IC=0
+R1 vout 0 50
+
+* PI Controller with upper-only anti-windup
+.param KP=0.15
+.param KI=500
+
+* Reference
+V_VREF vref 0 DC 24
+
+* Error
+B_ERR verr 0 V={V(vref) - V(vout)}
+
+* PI sum
+B_PID vpid 0 V={KP*V(verr) + V(vi)}
+
+* Clamp output to valid PWM range
+B_PID_CLAMP vpid_c 0 V={(V(vpid)>0)*(V(vpid)<9.5)*V(vpid)+(V(vpid)>=9.5)*9.5}
+R_PIDBLEED vpid_c 0 1e9
+
+* Anti-windup: freeze only on upper saturation
+B_WINDUP windup_en 0 V={1-(V(vpid)>=9.5)*(V(verr)>0)}
+G_I 0 vi VALUE={KI*V(verr)*V(windup_en)}
+C_I vi 0 1 IC=0
+R_I vi 0 1e12
+
+* Smooth carrier and smooth comparator for robust convergence
+V_CAR vcar 0 SIN(5 5 100k)
+B_PWM_RAW pwm_raw 0 V={5*(1+tanh((V(vpid_c)-V(vcar))/0.05))}
+R_PWM pwm_raw pwm 1
+C_PWM pwm 0 5n
+
+* Switch and Diode
+S1 vx 0 pwm 0 SW_IDEAL
+D1 vx vout D_IDEAL
+
+* Snubbers for Xyce convergence
+Rs vx 0 1k
+Cs vx 0 1n
+Rd vx vout 1k
+Cd vx vout 1n
+
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+
+.tran 10n 2m 0 10n UIC
+
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(vref) V(verr) V(vpid_c) V(pwm) I(L1) V(vx) V(vi)
+.end

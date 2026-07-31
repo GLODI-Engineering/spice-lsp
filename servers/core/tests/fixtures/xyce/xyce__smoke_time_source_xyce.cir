@@ -1,0 +1,8 @@
+* Smoke test for Xyce Verilog-A time-dependent voltage contribution
+
+Ytime_source ysrc out 0 AMP=1 FREQ=600k
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.tran 2n 10u 0 2n UIC
+.print tran FORMAT=PROBE V(out)
+.end

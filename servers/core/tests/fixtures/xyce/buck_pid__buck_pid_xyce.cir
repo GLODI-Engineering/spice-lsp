@@ -1,0 +1,53 @@
+* Buck Converter with PID Control Xyce
+VIN vin 0 DC 24
+L1 vx vout 100u
+C1 vout 0 100u IC=0
+R1 vout 0 5
+
+* Reference Voltage
+V_REF vref 0 DC 12
+
+* Error Amplifier (V_ERR = V_REF - V_OUT)
+E_ERR verr 0 vref vout 1
+
+* PID Controller (debug-stable tuning)
+.param KP=0.5
+.param KI=2200
+.param KD=0
+
+* Integrator state: dV(vi)/dt = error
+G_I 0 vi VALUE={V(verr)}
+C_I vi 0 1 IC=0
+R_I vi 0 1e12
+
+* PID sum + clamp to valid PWM command range
+B_PIDRAW pid_raw 0 V={KP*V(verr)+KI*V(vi)+KD*DDT(V(verr))}
+B_PID    vpid    0 V={(V(pid_raw)>0)*(V(pid_raw)<9.5)*V(pid_raw)+(V(pid_raw)>=9.5)*9.5}
+R_PIDBLEED vpid 0 1e9
+
+* Smooth carrier and smooth comparator for robust convergence
+V_CAR vcar 0 SIN(5 5 100k)
+B_PWM_RAW pwm_raw 0 V={5*(1+tanh((V(vpid)-V(vcar))/0.05))}
+R_PWM pwm_raw pwm 1
+C_PWM pwm 0 5n
+
+* Switch and Diode
+S1 vin vx pwm 0 SW_IDEAL
+D1 0 vx D_IDEAL
+
+* Snubbers
+Rs vin vx 1k
+Cs vin vx 1n
+Rd 0 vx 1k
+Cd 0 vx 1n
+
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+
+.tran 10n 2m 0 10n UIC
+
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(vref) V(vpid) V(pwm) I(L1) V(vx)
+.end

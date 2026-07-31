@@ -1,0 +1,111 @@
+* DAB Converter – Xyce 7.10 – 600 kHz, 3 kW
+
+* ── Primary DC source ─────────────────────────────────────────────────────
+VIN_SRC  vdc_p  0  DC 400.0
+C_IN     vdc_p  0  1.000000e-04
+
+* Reusable ABM PWM gate source for ngspice and Xyce.
+*
+* Usage:
+*   XG gate 0 PWM_GATE PARAMS: FS=600k DUTY=0.5 PHASE0=0 PHASE1=0 TSTEP=1e99 TD=50n VHI=10
+*
+* PHASE0 and PHASE1 are normalized to one switching period.
+* TSTEP selects when the phase changes from PHASE0 to PHASE1.
+* TD removes TD from both pulse edges, giving a dead-time margin.
+* PULSE sources create simulator breakpoints at PWM edges. BOUT selects the
+* pre-step or post-step phase, allowing one operating-point change per run.
+.subckt PWM_GATE out ref PARAMS: FS=600k DUTY=0.5 PHASE0=0 PHASE1=0 TSTEP=1e99 TD=0 TR=1n VHI=10
+.param TPER={1/FS}
+.param PW={DUTY*TPER-2*TD}
+.param DLY0={PHASE0*TPER+TD}
+.param DLY1={PHASE1*TPER+TD}
+VPH0 phase0 ref PULSE(0 {VHI} {DLY0} {TR} {TR} {PW} {TPER})
+VPH1 phase1 ref PULSE(0 {VHI} {DLY1} {TR} {TR} {PW} {TPER})
+BOUT out ref V={V(phase0,ref)*(TIME<TSTEP)+V(phase1,ref)*(TIME>=TSTEP)}
+.ends PWM_GATE
+
+* ── Primary H-bridge ──────────────────────────────────────────────────────
+XG_S1 g_s1 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.000000000 PHASE1=0.000000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+XG_S2 g_s2 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.500000000 PHASE1=0.500000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+S1  vdc_p  mid_a  g_s1 0  SW_IDEAL
+D1  mid_a  vdc_p  D_BODY
+S2  mid_a  0      g_s2 0  SW_IDEAL
+D2  0      mid_a  D_BODY
+C_S1 vdc_p mid_a  2.000000e-10 IC=400.0
+C_S2 mid_a 0      2.000000e-10 IC=0
+
+XG_S3 g_s3 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.050000000 PHASE1=0.050000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+XG_S4 g_s4 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.550000000 PHASE1=0.550000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+S3  vdc_p  mid_b  g_s3 0  SW_IDEAL
+D3  mid_b  vdc_p  D_BODY
+S4  mid_b  0      g_s4 0  SW_IDEAL
+D4  0      mid_b  D_BODY
+C_S3 vdc_p mid_b  2.000000e-10 IC=0
+C_S4 mid_b 0      2.000000e-10 IC=400.0
+* ── Series inductance (DAB tank) ───────────────────────────────────────────
+* IC = steady-state valley current at start of positive half → starts in quasi-SS
+L_series  mid_a  xfmr_p  8.333333e-06  IC=-20.00
+* Transformer winding DCR (100 mΩ)
+R_Ls  mid_b  xfmr_pn  0.1
+
+* ── Ideal 1:1 transformer (E/F dependent sources, NO Lm) ───────────────────
+* Lm (magnetising inductance) is OMITTED to keep KCL consistent with IL IC.
+* Lm ≈ 2 mH → magnetising current ΔI = V·T/(2Lm) ≈ ±83 mA  << ±20 A series current.
+* With Lm gone: I_primary = I_secondary exactly, and KCL at xfmr_p is satisfied
+* because the secondary carries −20 A through body diodes during the initial dead time
+* (secondary ZVS transition mirrors the primary one).
+E_sec xfmr_s xfmr_sn xfmr_p xfmr_pn 1.0
+F_pri xfmr_p xfmr_pn E_sec  1.0
+
+* Transformer winding to H-bridge midpoints (1 mΩ sensing resistors)
+R_sp  xfmr_s   mid_c  1m
+R_sn  xfmr_sn  mid_d  1m
+* ── Secondary H-bridge ────────────────────────────────────────────────────
+XG_S5 g_s5 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.066987298 PHASE1=0.250000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+XG_S6 g_s6 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.566987298 PHASE1=0.750000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+S5  vdc_s_p  mid_c  g_s5 0  SW_IDEAL
+D5  mid_c    vdc_s_p  D_BODY
+S6  mid_c    vdc_s_n  g_s6 0  SW_IDEAL
+D6  vdc_s_n  mid_c    D_BODY
+C_S5 vdc_s_p mid_c  2.000000e-10 IC=400.0
+C_S6 mid_c   vdc_s_n 2.000000e-10 IC=0
+
+XG_S7 g_s7 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.116987298 PHASE1=0.300000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+XG_S8 g_s8 0 PWM_GATE PARAMS: FS=6.000000e+05 DUTY=0.500000 PHASE0=0.616987298 PHASE1=0.800000000 TSTEP=4.166667e-05 TD=5.000000e-08 TR=1.000000e-09 VHI=10.000000
+S7  vdc_s_p  mid_d  g_s7 0  SW_IDEAL
+D7  mid_d    vdc_s_p  D_BODY
+S8  mid_d    vdc_s_n  g_s8 0  SW_IDEAL
+D8  vdc_s_n  mid_d    D_BODY
+C_S7 vdc_s_p mid_d  2.000000e-10 IC=0
+C_S8 mid_d   vdc_s_n 2.000000e-10 IC=400.0
+* ── Secondary DC bus (voltage-clamp load) ──────────────────────────────────
+* V_OUT replaces C_OUT: the DC op-point trivially finds Vout=400 V,
+* removing the need for UIC / IC= pre-charge gymnastics.
+* ZVS and power are fully observable; ripple is not modelled.
+V_OUT   vdc_s_p  vdc_s_n  DC 400.0
+R_LOAD_INITIAL  vdc_s_p  vdc_s_n  160.0000
+R_LOAD_STEP     vdc_s_p  load_step_mid  80.0000
+S_LOAD_STEP     load_step_mid  vdc_s_n  load_ctl 0 SW_LOAD
+V_LOAD_CTL      load_ctl 0 PWL( 0 0 4.166667e-05 0 4.166767e-05 10 )
+* Hard ground reference for isolated secondary
+R_GND_SEC  vdc_s_n  0  1m
+
+* ── Models ─────────────────────────────────────────────────────────────────
+.model SW_IDEAL VSWITCH(RON=0.05 ROFF=1e+06 VON=5.5 VOFF=4.5)
+.model SW_LOAD  VSWITCH(RON=1m ROFF=1e12 VON=5.5 VOFF=4.5)
+.model D_BODY   D(IS=1e-9 N=0.5 RS=0.02 BV=1200)
+
+* ── Options ────────────────────────────────────────────────────────────────
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+.options OUTPUT INITIAL_INTERVAL=2.000000e-09
+
+* ── Print ───────────────────────────────────────────────────────────────────
+.print TRAN FORMAT=PROBE
++ V(mid_a) V(mid_b) V(vdc_s_p) V(vdc_s_n)
++ I(L_series) V(g_s1) V(g_s5) I(V_OUT) V(load_ctl)
+
+* ── Transient (UIC applies IC= on caps/inductors) ──────────────────────────
+.tran 2.000000e-09 8.333333e-05 UIC
+
+.end

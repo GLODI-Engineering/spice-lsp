@@ -1,0 +1,130 @@
+* Three-Phase Inverter with PI Voltage Control and Variable Load (Xyce)
+
+.param VDC=600
+.param FOUT=50
+.param FSW=10000
+.param EPS=0.05
+.param DEAD=0.02
+
+* PI loop targets line-line RMS voltage
+.param VLL_REF=250
+.param MOD_BIAS=0.80
+.param KP=0.0020
+.param KI=0.02
+.param TAU_RMS=20m
+
+* -------------------- DC side + input filter --------------------
+VDCBUS vin 0 DC {VDC}
+RIN_DAMP vin vin_d 0.02
+LIN vin_d vdc_p 1m
+CIN vdc_p 0 1000u IC={VDC}
+RCIN vdc_p 0 0.2
+
+* -------------------- PI voltage controller --------------------
+* Fundamental RMS estimator (synchronous demodulation on 50 Hz)
+BDEM_S vll_ds 0 V={(v(a)-v(b))*sin(2*PI*{FOUT}*TIME)}
+BDEM_C vll_dc 0 V={(v(a)-v(b))*cos(2*PI*{FOUT}*TIME)}
+RDEM_S vll_ds vll_ds_f 1
+CDEM_S vll_ds_f 0 {TAU_RMS}
+RDEM_C vll_dc vll_dc_f 1
+CDEM_C vll_dc_f 0 {TAU_RMS}
+BRMS vll_rms 0 V={sqrt(2)*sqrt(V(vll_ds_f)*V(vll_ds_f)+V(vll_dc_f)*V(vll_dc_f))}
+
+VREFCMD vll_ref 0 PWL(0 0 20m 0 35m {VLL_REF} 100m {VLL_REF})
+BERR verr 0 V={V(vll_ref)-V(vll_rms)}
+GINT 0 vint VALUE={v(verr)}
+CINT vint 0 1 IC=0
+RINT vint 0 1e9
+
+BMODRAW mod_raw 0 V={MOD_BIAS+KP*v(verr)+KI*v(vint)}
+BMOD mod_ctl 0 V={(V(mod_raw)>0.05)*(V(mod_raw)<0.98)*V(mod_raw)+(V(mod_raw)>=0.98)*0.98+(V(mod_raw)<=0.05)*0.05}
+RMB mod_ctl 0 1e9
+
+* -------------------- SPWM control --------------------
+BTRI tri 0 V={(2/PI)*asin(sin(2*PI*{FSW}*TIME))}
+
+BREF_A refa 0 V={V(mod_ctl)*sin(2*PI*{FOUT}*TIME)}
+BREF_B refb 0 V={V(mod_ctl)*sin(2*PI*{FOUT}*TIME-2*PI/3)}
+BREF_C refc 0 V={V(mod_ctl)*sin(2*PI*{FOUT}*TIME+2*PI/3)}
+
+BGA_H gha 0 V=5*(1+tanh((v(refa)-v(tri))/{EPS}))
+BGB_H ghb 0 V=5*(1+tanh((v(refb)-v(tri))/{EPS}))
+BGC_H ghc 0 V=5*(1+tanh((v(refc)-v(tri))/{EPS}))
+
+BGA_L gla 0 V={5*(1+tanh((v(tri)-v(refa)-{DEAD})/{EPS}))}
+BGB_L glb 0 V={5*(1+tanh((v(tri)-v(refb)-{DEAD})/{EPS}))}
+BGC_L glc 0 V={5*(1+tanh((v(tri)-v(refc)-{DEAD})/{EPS}))}
+
+* -------------------- Inverter bridge --------------------
+SAH vdc_p sa gha 0 SWMOD
+SAL sa 0 gla 0 SWMOD
+SBH vdc_p sb ghb 0 SWMOD
+SBL sb 0 glb 0 SWMOD
+SCH vdc_p sc ghc 0 SWMOD
+SCL sc 0 glc 0 SWMOD
+
+* Snubbers
+RSAH vdc_p sa 2k
+CSAH vdc_p sa 470p
+RSAL sa 0 2k
+CSAL sa 0 470p
+RSBH vdc_p sb 2k
+CSBH vdc_p sb 470p
+RSBL sb 0 2k
+CSBL sb 0 470p
+RSCH vdc_p sc 2k
+CSCH vdc_p sc 470p
+RSCL sc 0 2k
+CSCL sc 0 470p
+
+.model SWMOD VSWITCH(RON=20m ROFF=50Meg VON=5.5 VOFF=4.5)
+.model SWLOAD VSWITCH(RON=20m ROFF=10Meg VON=5.5 VOFF=4.5)
+
+* -------------------- Output LC filter --------------------
+LFA sa a_l 1.6m
+RLA_SER a_l a 50m
+LFB sb b_l 1.6m
+RLB_SER b_l b 50m
+LFC sc c_l 1.6m
+RLC_SER c_l c 50m
+
+RDA a a_cf 1.5
+CFA a_cf n 8u
+RDB b b_cf 1.5
+CFB b_cf n 8u
+RDC c c_cf 1.5
+CFC c_cf n 8u
+
+* -------------------- Variable 3-phase load --------------------
+RLOAD1_A a a1_rl 18
+LLOAD1_A a1_rl n 15m
+RLOAD1_B b b1_rl 18
+LLOAD1_B b1_rl n 15m
+RLOAD1_C c c1_rl 18
+LLOAD1_C c1_rl n 15m
+
+VLOADCMD lcmd 0 PULSE(0 10 60m 50u 50u 1 2)
+
+SLOAD2_A a a2_sw lcmd 0 SWLOAD
+RLOAD2_A a2_sw a2_rl 18
+LLOAD2_A a2_rl n 15m
+RBLEED_A a2_sw n 1Meg
+
+SLOAD2_B b b2_sw lcmd 0 SWLOAD
+RLOAD2_B b2_sw b2_rl 18
+LLOAD2_B b2_rl n 15m
+RBLEED_B b2_sw n 1Meg
+
+SLOAD2_C c c2_sw lcmd 0 SWLOAD
+RLOAD2_C c2_sw c2_rl 18
+LLOAD2_C c2_rl n 15m
+RBLEED_C c2_sw n 1Meg
+
+RNEUT n 0 1Meg
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-7 RELTOL=1e-4
+.options NONLIN-TRAN MAXSTEP=500 MAXSEARCHSTEP=5
+.tran 2u 100m 0 2u UIC
+
+.print TRAN FORMAT=PROBE V(vdc_p) V(a) V(b) V(c) V(sa) V(sb) V(sc) V(vll_rms) V(vll_ref) V(mod_ctl) V(verr) V(lcmd) V(tri) V(refa) V(refb) V(refc) I(LFA) I(LFB) I(LFC) I(VDCBUS)
+.end

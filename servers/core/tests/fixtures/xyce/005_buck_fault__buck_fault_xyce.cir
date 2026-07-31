@@ -1,0 +1,30 @@
+* Buck converter startup + fault transient (Xyce)
+VIN vin 0 DC 24
+L1 vx vout 100u
+C1 vout 0 100u IC=0
+RLOAD vout 0 5
+
+* Fault switch to emulate output short after 1ms
+VFAULT vfault 0 PULSE(0 10 1m 100n 100n 2m 10m)
+SFAULT vout 0 vfault 0 SW_FAULT
+
+V_PWM pwm 0 PULSE(0 10 0 10n 10n 5u 10u)
+S1 vin vx pwm 0 SW_IDEAL
+D1 0 vx D_IDEAL
+
+* Snubbers
+Rs vin vx 1k
+Cs vin vx 1n
+Rd 0 vx 1k
+Cd 0 vx 1n
+
+.model SW_IDEAL VSWITCH(RON=10m ROFF=1Meg VON=5.5 VOFF=4.5)
+.model SW_FAULT VSWITCH(RON=50m ROFF=1e9 VON=5.5 VOFF=4.5)
+.model D_IDEAL D(IS=1e-14 N=1 RS=10m)
+
+.options TIMEINT METHOD=Gear MAXORD=2 ABSTOL=1e-6 RELTOL=0.001
+.options NONLIN-TRAN MAXSTEP=200 MAXSEARCHSTEP=5
+
+.tran 20n 4m 0 20n UIC
+.print TRAN FORMAT=PROBE V(vin) V(vout) V(pwm) I(L1) V(vx) V(vfault)
+.end
