@@ -1,11 +1,24 @@
+//! Extracts a single named section out of a `.lib` file's `.lib name` /
+//! `.endl name` blocks — entry point [`extract_lib_section`] — for a
+//! `.lib "file" section` reference. [`extract_whole_file`] handles the
+//! sectionless `.lib "file"` form, which pulls in everything.
+
 use crate::lexer::ProcessedLine;
 
+/// A `.lib` section that couldn't be extracted: the named section doesn't
+/// exist in the file, or its `.lib`/`.endl` pair is unterminated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionDiagnostic {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The section name that was requested.
     pub section: String,
 }
 
+/// Scan `lines` for a `.lib section_name` / `.endl section_name` block
+/// (case-insensitive) and return only the lines inside it. Errors if the
+/// section is never opened, or opened but never closed with a matching
+/// `.endl`.
 pub fn extract_lib_section(
     lines: &[ProcessedLine],
     section_name: &str,
@@ -56,6 +69,8 @@ pub fn extract_lib_section(
     Ok(result)
 }
 
+/// Returns `lines` unchanged — used for a `.lib "file"` reference with no
+/// section name, which pulls in the entire file rather than one section.
 pub fn extract_whole_file(lines: &[ProcessedLine]) -> Vec<ProcessedLine> {
     lines.to_vec()
 }

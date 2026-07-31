@@ -1,27 +1,81 @@
+//! Builds the [`Scope`] tree from a flat [`Statement`] list: a `.subckt`
+//! statement is consumed into a new child `Scope` (not left behind as a
+//! plain statement — see [`Scope`]'s docs), and everything else is
+//! attached to whichever scope is currently open. This tree is the input
+//! every diagnostic pass in [`crate::symbols`] operates on.
+
 use crate::ast::{LineSpan, Statement};
 
+/// Whether a [`Scope`] is the top-level document scope or a `.subckt`
+/// body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
+    /// The single root scope representing the whole document (or merged
+    /// multi-file document — see [`build_scope_tree_from_tagged`]).
     TopLevel,
+    /// A `.subckt`/`.ends` body. [`Scope::name`] is the subcircuit's name
+    /// for this kind.
     Subckt,
 }
 
+/// One lexical scope: either the whole top-level document, or one
+/// `.subckt` body. Built by [`build_scope_tree`].
+///
+/// Important: a `.subckt` statement itself is **not** present in any
+/// `Scope::statements` list — [`build_scope_tree`] consumes it into the
+/// child `Scope`'s own `kind`/`name` instead. Code that walks statements
+/// looking for `.subckt` definitions (e.g. to check for duplicates) must
+/// account for this — see [`collect_subckt_definitions`].
 #[derive(Debug, Clone)]
 pub struct Scope {
+    /// Whether this is the top-level document scope or a `.subckt` body.
     pub kind: ScopeKind,
+    /// The subcircuit's name, for a [`ScopeKind::Subckt`] scope. `None`
+    /// for [`ScopeKind::TopLevel`].
     pub name: Option<String>,
+    /// Nesting depth: `0` for the top-level scope, `1` for a subcircuit
+    /// defined directly in the top level, `2` for one nested inside that,
+    /// and so on.
     pub depth: u32,
+    /// Every statement lexically inside this scope, in source order —
+    /// except `.subckt`/`.ends` themselves, which become child `Scope`s
+    /// (see this struct's top-level docs) rather than statements here.
     pub statements: Vec<Statement>,
+    /// Subcircuits defined directly inside this scope (one level of
+    /// nesting down). Use [`flatten_scopes`] to walk the whole tree, or
+    /// [`collect_subckt_definitions`] to get every subcircuit definition
+    /// regardless of nesting depth.
     pub children: Vec<Scope>,
+    /// Where in the source this scope's opening statement (`.subckt` line,
+    /// or `0..1` as a placeholder for the top-level scope, which has no
+    /// single opening line) is.
     pub span: LineSpan,
 }
 
+/// A structural error found while building the scope tree: unmatched
+/// `.subckt`/`.ends` nesting. This is distinct from the semantic
+/// diagnostics produced by [`crate::symbols::uniqueness`],
+/// [`crate::symbols::subckt_resolution`], etc., which all require a
+/// successfully-built `Scope` tree to run against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeError {
+    /// A human-readable description of the structural problem, e.g.
+    /// `".ends without matching .subckt"`.
     pub message: String,
+    /// Where in the source the problem was detected.
     pub span: LineSpan,
 }
 
+/// Build a [`Scope`] tree from a single file's parsed statements.
+///
+/// Returns `Err` with every unmatched `.subckt`/`.ends` found (there may
+/// be more than one) if the nesting is structurally malformed — an
+/// `.ends` with no matching `.subckt`, or vice versa. A mismatched `.ends`
+/// *name* (`.ends foo` closing a `.subckt bar`) is reported the same way,
+/// as a `ScopeError`, not silently ignored.
+///
+/// For a merged multi-file document (see [`crate::include::graph`]), use
+/// [`build_scope_tree_from_tagged`] instead.
 pub fn build_scope_tree(statements: &[Statement]) -> Result<Scope, Vec<ScopeError>> {
     let mut errors = Vec::new();
     let mut root = new_top_level();
@@ -89,6 +143,15 @@ pub fn build_scope_tree(statements: &[Statement]) -> Result<Scope, Vec<ScopeErro
     }
 }
 
+/// Build a [`Scope`] tree from a merged multi-file statement list — the
+/// `(FileId, Statement)` pairs [`crate::include::graph::resolve_includes`]
+/// produces. Each file's statements were already remapped into a shared
+/// virtual line-number space before reaching here (see
+/// [`crate::include::source_map::SourceMap::assign_offset`]), so the
+/// resulting tree behaves exactly like a single-file tree — a `.subckt`
+/// defined in an included file resolves from an `X`-call in the including
+/// file just as if the text had been spliced in directly, matching real
+/// SPICE `.include` semantics.
 pub fn build_scope_tree_from_tagged(
     tagged: &[(crate::include::source_map::FileId, Statement)],
 ) -> Result<Scope, Vec<ScopeError>> {
@@ -118,6 +181,8 @@ fn new_subckt_scope(name: String, depth: u32, span: LineSpan) -> Scope {
     }
 }
 
+/// Every scope in the tree rooted at `scope`, including `scope` itself,
+/// in depth-first order.
 pub fn flatten_scopes(scope: &Scope) -> Vec<&Scope> {
     let mut v = vec![scope];
     for child in &scope.children {
@@ -126,6 +191,10 @@ pub fn flatten_scopes(scope: &Scope) -> Vec<&Scope> {
     v
 }
 
+/// Every `.subckt` definition anywhere in the tree rooted at `scope`,
+/// regardless of nesting depth — the right way to enumerate `.subckt`
+/// definitions, since (per [`Scope`]'s docs) they exist as child scopes,
+/// not as statements you could find by scanning `Scope::statements`.
 pub fn collect_subckt_definitions(scope: &Scope) -> Vec<&Scope> {
     let mut v = Vec::new();
     if scope.kind == ScopeKind::Subckt {

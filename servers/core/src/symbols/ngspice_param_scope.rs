@@ -1,20 +1,51 @@
+//! ngspice's `.param` lexical-shadowing scope chain (docs/GRAMMAR.md §4.2/
+//! §6.1): a top-level `.param` is global; a `.subckt`'s formal parameters
+//! and local `.param` lines shadow same-named globals until the matching
+//! `.ends`, without mutating the outer binding — assigning to a
+//! global-named identifier inside a subckt always creates a local shadow,
+//! never a true global mutation. See [`build_param_scope_chain`] and
+//! [`resolve_param_ident`] for the lookup mechanics, and
+//! [`check_self_references`] for the separate no-self-reference rule
+//! (`.param x='x+1'` is illegal).
+//!
+//! Contrast with [`crate::symbols::xyce_param_scope`], which is NOT the
+//! same shadow-then-restore model — Xyce's subcircuit-local `.param`s are
+//! just plain lexical scoping with no special protection mechanic.
+
 use crate::ast::Statement;
 use crate::symbols::scope::Scope;
 
+/// One `.param` (or `.subckt` formal-parameter) binding, tagged with the
+/// scope depth it was declared at. Produced by [`build_param_scope_chain`],
+/// looked up via [`resolve_param_ident`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamBinding {
+    /// The parameter name, uppercased (lookups are case-insensitive).
     pub name: String,
+    /// The raw (unparsed) default/assigned value, if any. `None` for a
+    /// bare formal parameter with no default.
     pub value: Option<String>,
+    /// The [`Scope::depth`] this binding was declared at.
     pub scope_depth: u32,
+    /// Whether this came from a `.subckt` formal-parameter list (`true`)
+    /// or a `.param` statement (`false`).
     pub is_formal: bool,
 }
 
+/// A `.param` scoping problem: a self-referencing assignment (see
+/// [`check_self_references`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamDiagnostic {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The source line number the problem was found on.
     pub line: usize,
 }
 
+/// Collect every `.param`/formal-parameter binding in `scope_tree`,
+/// grouped by scope depth. Feed the result into [`resolve_param_ident`] to
+/// look up a name from a given scope, respecting ngspice's shadowing
+/// rules.
 pub fn build_param_scope_chain(scope_tree: &Scope) -> Vec<(u32, Vec<ParamBinding>)> {
     let mut bindings = Vec::new();
     collect_bindings(scope_tree, &mut bindings);
@@ -57,6 +88,13 @@ fn collect_bindings(scope: &Scope, bindings: &mut Vec<(u32, Vec<ParamBinding>)>)
     }
 }
 
+/// Look up `name` from a scope at `query_depth`, using `scope_chains`
+/// (the output of [`build_param_scope_chain`]). Returns the innermost
+/// binding visible from that depth — i.e. the same name declared at a
+/// deeper scope than `query_depth` is correctly invisible, and a binding
+/// at `query_depth` itself takes priority over one from an enclosing
+/// scope, implementing ngspice's shadowing rule. Returns `None` if `name`
+/// isn't bound anywhere reachable from `query_depth`.
 pub fn resolve_param_ident(
     scope_chains: &[(u32, Vec<ParamBinding>)],
     query_depth: u32,
@@ -77,6 +115,10 @@ pub fn resolve_param_ident(
     None
 }
 
+/// Flag every `.param` assignment whose expression references its own
+/// name, e.g. `.param pip='pip+3'` — illegal in ngspice's compile-time
+/// grammar (docs/GRAMMAR.md §6.1: a `.param` must be fully assigned once,
+/// before its first use; there is no incremental-update/recursion form).
 pub fn check_self_references(scope_tree: &Scope) -> Vec<ParamDiagnostic> {
     let mut diagnostics = Vec::new();
     check_scope_self_ref(scope_tree, &mut diagnostics);

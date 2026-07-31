@@ -4,6 +4,10 @@ use crate::ast::*;
 use crate::dialect::{DeviceKind, Dialect};
 use crate::lexer::ProcessedLine;
 
+/// Parse `lines` under ngspice statement syntax. `.control`/`.endc` blocks
+/// are tracked and treated as opaque (their contents are not parsed as
+/// ordinary statements, since `.control` bodies are a separate scripting
+/// sub-language — see docs/GRAMMAR.md).
 pub fn parse(lines: &[ProcessedLine]) -> Vec<ParseResult> {
     let mut results = Vec::with_capacity(lines.len());
     let mut in_control_block = false;

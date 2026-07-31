@@ -1,23 +1,43 @@
+//! Tracks every file involved in a multi-file resolution and maps between
+//! real per-file line numbers and the "virtual" line numbers used to merge
+//! statements from different files into one `Vec<Statement>` — see
+//! [`SourceMap::assign_offset`]/[`SourceMap::resolve_virtual_line`].
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::ast::LineSpan;
 
+/// Opaque identifier for a file registered with a [`SourceMap`]. Compare
+/// and hash freely; look up its path/text via [`SourceMap::get_path`]/
+/// [`SourceMap::get_text`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId(pub(crate) usize);
 
 impl FileId {
+    /// A placeholder [`FileId`] for call sites that don't have a real
+    /// [`SourceMap`] to register against (e.g. single-file parsing paths
+    /// that don't track file identity).
     pub fn new_dummy() -> Self {
         FileId(0)
     }
 }
 
+/// A line range within a specific file, as opposed to [`LineSpan`] alone
+/// which is ambiguous once statements from multiple files are merged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSpan {
+    /// Which file `lines` is within.
     pub file: FileId,
+    /// The line range within that file.
     pub lines: LineSpan,
 }
 
+/// Registry of every file involved in a multi-file resolution, plus the
+/// virtual-line-number bookkeeping ([`SourceMap::assign_offset`]/
+/// [`SourceMap::resolve_virtual_line`]) that lets [`crate::include::graph`]
+/// merge statements from different files into a single `Vec<Statement>`
+/// without adding a `FileId` field to `Statement`/`Scope` themselves.
 #[derive(Debug, Clone)]
 pub struct SourceMap {
     files: Vec<(PathBuf, String)>,
@@ -41,6 +61,7 @@ impl Default for SourceMap {
 }
 
 impl SourceMap {
+    /// Creates an empty `SourceMap` with no files registered.
     pub fn new() -> Self {
         SourceMap {
             files: Vec::new(),
@@ -53,6 +74,9 @@ impl SourceMap {
         }
     }
 
+    /// Registers `path` with `text`, returning its [`FileId`]. Idempotent:
+    /// calling this twice for the same `path` returns the same `FileId`
+    /// without re-registering (the second call's `text` is ignored).
     pub fn register(&mut self, path: PathBuf, text: String) -> FileId {
         if let Some(&id) = self.path_to_id.get(&path) {
             return id;
@@ -63,10 +87,12 @@ impl SourceMap {
         id
     }
 
+    /// Returns the registered path for `id`, if it was registered.
     pub fn get_path(&self, id: FileId) -> Option<&PathBuf> {
         self.files.get(id.0).map(|(p, _)| p)
     }
 
+    /// Returns the registered text content for `id`, if it was registered.
     pub fn get_text(&self, id: FileId) -> Option<&str> {
         self.files.get(id.0).map(|(_, t)| t.as_str())
     }

@@ -1,10 +1,22 @@
+//! ngspice's compile-time expression grammar — the subset used in
+//! `.PARAM` definitions, `.model` parameter expressions, and `.func`
+//! bodies. Distinct from [`crate::expr::ngspice_runtime`], which covers
+//! ngspice's behavioral-source (`B`-element, `E`/`G` POLY) expression
+//! grammar; the two differ in which built-in functions/variables are
+//! available (e.g. `time`/`temper`/`hertz` are runtime-only). Entry point:
+//! [`parse_ngspice_compiletime`].
+
 use crate::dialect::Dialect;
 use crate::expr::ast::*;
 use crate::expr::token::*;
 
+/// An expression that failed to parse under ngspice's compile-time
+/// grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
+    /// A human-readable description of the problem.
     pub message: String,
+    /// The byte offset in the input where the problem was found.
     pub offset: usize,
 }
 
@@ -301,10 +313,14 @@ const BUILTINS: &[&str] = &[
     "VEC",
 ];
 
+/// Returns whether `name` (case-insensitive) is a built-in function name in
+/// ngspice's compile-time expression grammar.
 pub fn is_builtin(name: &str) -> bool {
     BUILTINS.contains(&name.to_uppercase().as_str())
 }
 
+/// Tokenizes and parses `input` as an ngspice compile-time expression
+/// (a `.PARAM`/`.model`/`.func` expression body).
 pub fn parse_ngspice_compiletime(input: &str) -> Result<Expr> {
     let tokens = tokenize(input, Dialect::Ngspice).map_err(|e| ParseError {
         message: e.message,

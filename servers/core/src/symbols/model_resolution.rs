@@ -1,11 +1,24 @@
+//! Resolves device-instance model-name references against `.model`
+//! definitions — [`resolve_model_references`] is the entry point.
+//!
+//! The tricky part this module handles: not every element instance
+//! references a model at all. `R1 1 2 100` is a bare numeric value; only
+//! `RMOD 3 7 RMODEL L=10u W=1u` actually names a model. Getting this
+//! distinction wrong either misses real undefined-model errors or (worse)
+//! false-positives on every ordinary resistor/capacitor/inductor in a
+//! netlist — see [`model_name_from_params`].
+
 use crate::ast::{LineSpan, Statement};
 use crate::dialect::DeviceKind;
 use crate::dialect::Dialect;
 use crate::symbols::scope::Scope;
 
+/// An undefined `.model` reference, found by [`resolve_model_references`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelDiagnostic {
+    /// A human-readable message naming the undefined model.
     pub message: String,
+    /// Where in the source the referencing element instance is.
     pub span: LineSpan,
 }
 
@@ -54,6 +67,15 @@ fn model_name_from_params(raw_params: &[String]) -> Option<String> {
     None
 }
 
+/// Resolve every element instance in `scope_tree` that plausibly
+/// references a `.model` (per [`device_takes_model`] and
+/// [`model_name_from_params`]'s bare-numeric-value heuristic) against the
+/// `.model` definitions available to it, flagging undefined references.
+/// Devices that structurally never take a model (`V`, `I`, `E`, `G`, `F`,
+/// `H`, `X`) are skipped entirely, not run through model-name detection at
+/// all. Model-binning suffixes (`basename.1`, `basename.2`, ...) resolve
+/// against their base model name, matching
+/// [`crate::symbols::uniqueness`]'s binning exemption.
 pub fn resolve_model_references(scope_tree: &Scope, dialect: Dialect) -> Vec<ModelDiagnostic> {
     let mut diagnostics = Vec::new();
     let model_names: Vec<String> = collect_model_names(scope_tree);

@@ -1,3 +1,12 @@
+//! Walks a [`Scope`] tree and parses every runtime/behavioral-source
+//! expression it contains — `B`-element `V=`/`I=` equations and `E`/`G`
+//! POLY controlled-source expressions — using the dialect-appropriate
+//! runtime grammar ([`crate::expr::ngspice_runtime`] or
+//! [`crate::expr::xyce`]). Complements
+//! [`crate::expr::wiring_compiletime::wire_compiletime_expressions`], which
+//! covers `.param`/`.func`/`.model`/`.subckt` expressions instead. Entry
+//! point: [`wire_runtime_expressions`].
+
 use crate::ast::*;
 use crate::dialect::Dialect;
 use crate::expr::ast::Expr;
@@ -5,13 +14,21 @@ use crate::expr::ngspice_runtime;
 use crate::expr::xyce;
 use crate::symbols::scope::Scope;
 
+/// One runtime/behavioral-source expression's parse outcome.
 #[derive(Debug, Clone)]
 pub struct WiredRuntimeExpr {
+    /// Where in the source the containing element instance is.
     pub span: LineSpan,
+    /// The parsed expression, if parsing succeeded.
     pub expr: Option<Expr>,
+    /// A human-readable parse-error message, if parsing failed.
     pub error: Option<String>,
 }
 
+/// Parse every runtime/behavioral-source expression in `scope_tree`
+/// (recursively, through every child scope) under `dialect`'s runtime
+/// grammar. A parse failure for one expression does not stop the rest of
+/// the document from being wired.
 pub fn wire_runtime_expressions(scope_tree: &Scope, dialect: Dialect) -> Vec<WiredRuntimeExpr> {
     let mut results = Vec::new();
     wire_runtime_in_scope(scope_tree, dialect, &mut results);

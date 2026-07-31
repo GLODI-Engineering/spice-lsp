@@ -1,19 +1,37 @@
+//! Cross-dialect "gotcha" lints for expressions — not syntax errors, but
+//! warnings about operators/functions whose *meaning* silently flips
+//! between ngspice and Xyce (`^`, `log()`), plus a Xyce-specific
+//! ternary/node-path ambiguity lint. Each `lint_*` function walks an
+//! already-parsed [`Expr`] tree and returns zero or more [`Diagnostic`]s.
+
 use crate::dialect::Dialect;
 use crate::expr::ast::*;
 
+/// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Severity {
+    /// The expression is very likely wrong.
     Error,
+    /// The expression is suspicious but may be intentional.
     Warning,
+    /// Informational — worth surfacing to the user, not a problem by
+    /// itself (e.g. "this operator means X in this dialect").
     Info,
 }
 
+/// One lint finding: a severity plus a human-readable message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// How serious this finding is.
     pub severity: Severity,
+    /// A human-readable description.
     pub message: String,
 }
 
+/// Flags every `^` binary operator in `expr`, noting what it means under
+/// `dialect` (power in ngspice, boolean XOR in Xyce) and what it would mean
+/// under the other dialect — since `^` is one of the most common sources of
+/// silent miscalculation when porting a netlist between simulators.
 pub fn lint_caret_dialect_confusion(expr: &Expr, dialect: Dialect) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     lint_caret_recursive(expr, dialect, &mut diags);
@@ -60,6 +78,10 @@ fn lint_caret_recursive(expr: &Expr, dialect: Dialect, diags: &mut Vec<Diagnosti
     }
 }
 
+/// Flags every `LOG()`/`LOG10()`/`LN()` call in `expr` (case-insensitive),
+/// noting which base `log()` resolves to under `dialect` (natural log in
+/// ngspice, base-10 in Xyce by default) — another common source of silent
+/// miscalculation when porting a netlist between simulators.
 pub fn lint_log_dialect_confusion(expr: &Expr, dialect: Dialect) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     lint_log_recursive(expr, dialect, &mut diags);
@@ -140,6 +162,13 @@ fn lint_log_recursive(expr: &Expr, dialect: Dialect, diags: &mut Vec<Diagnostic>
     }
 }
 
+/// Flags a Xyce ternary whose `then` branch is a bare identifier
+/// immediately before the `:` (e.g. `cond ? a : b`), since Xyce also uses
+/// `:` as a hierarchical node-path separator (`Xmain:Xnot1:A`) — a bare
+/// identifier there is ambiguous to a human reader even though the parser
+/// resolves it unambiguously. Not flagged when the `then` branch is
+/// parenthesized/a sub-expression, or is itself a `V()`/`I()`/`N()`
+/// reference containing a node path.
 pub fn lint_xyce_ternary_colon_collision(expr: &Expr) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     lint_ternary_recursive(expr, &mut diags);
