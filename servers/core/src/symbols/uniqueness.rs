@@ -1,5 +1,5 @@
 use crate::ast::{LineSpan, Statement};
-use crate::symbols::scope::Scope;
+use crate::symbols::scope::{Scope, ScopeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DuplicateDiagnostic {
@@ -61,6 +61,26 @@ fn check_scope(
     }
 
     for child in &scope.children {
+        // A real `.subckt` never appears as a `Statement::Subckt` in any
+        // scope's `.statements` list — build_scope_tree() consumes it into
+        // the Scope tree structure itself (the child Scope's own
+        // kind/name). Check it here so duplicate `.subckt` names are
+        // actually caught against the real parser pipeline's output, not
+        // just against hand-built fixtures that place `Statement::Subckt`
+        // directly into `.statements` (kept working above for backward
+        // compatibility with such fixtures, but that shape never occurs in
+        // practice).
+        if child.kind == ScopeKind::Subckt {
+            if let Some(name) = &child.name {
+                check_and_record(
+                    name.to_uppercase(),
+                    "subcircuit".into(),
+                    child.span.clone(),
+                    seen,
+                    diagnostics,
+                );
+            }
+        }
         check_scope(child, seen, diagnostics);
     }
 }
@@ -274,5 +294,49 @@ mod tests {
         let scope = scope_from_stmts(stmts);
         let diags = check_unique_names(&scope);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn test_duplicate_subckt_names_flagged_via_real_build_scope_tree_pipeline() {
+        // Regression test for the CORE-15 pipeline-integration bug: unlike
+        // test_duplicate_subckt_names_flagged above (which places
+        // Statement::Subckt directly into .statements, a shape that never
+        // occurs in real usage), this test goes through the actual
+        // build_scope_tree() parser pipeline, where a `.subckt`/`.ends`
+        // pair becomes a child Scope rather than a Statement::Subckt
+        // entry — the exact shape that previously made duplicate .subckt
+        // detection a no-op in practice.
+        use crate::symbols::scope::build_scope_tree;
+
+        let stmts = vec![
+            Statement::Subckt(Subckt {
+                name: "opamp".into(),
+                nodes: vec![],
+                params: vec![],
+                span: 1..2,
+            }),
+            Statement::Ends(Some("opamp".into()), 2..3),
+            Statement::Subckt(Subckt {
+                name: "OPAMP".into(),
+                nodes: vec![],
+                params: vec![],
+                span: 5..6,
+            }),
+            Statement::Ends(Some("opamp".into()), 6..7),
+        ];
+        let tree = build_scope_tree(&stmts).unwrap();
+        assert_eq!(
+            tree.children.len(),
+            2,
+            "sanity check: two sibling scopes expected"
+        );
+
+        let diags = check_unique_names(&tree);
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected one duplicate-subckt diagnostic (case-insensitive 'opamp'/'OPAMP'), got: {diags:?}"
+        );
+        assert!(diags[0].message.contains("subcircuit"));
     }
 }
