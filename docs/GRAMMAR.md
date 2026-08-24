@@ -778,3 +778,38 @@ Known/likely facts to verify:
 **Action item:** once a reference tool docs are added to the docs folder, repeat the
 same extraction-agent process used for ngspice/Xyce and merge into this
 section with the same 🟢/🔵/🟠/🟡-style tagging (adding a 🟣 a reference tool tag).
+
+## 12. Project-specific extension: block/signal-domain statements
+
+**Not part of any real SPICE dialect** — unlike every section above, this is this project's own
+grammar extension, consumed by the `general-mna`/`general-simulator` sibling repos (a continuous-
+block/signal-domain simulation layer built on top of `general-spice-core`'s parsed output). Kept
+here rather than only in those repos' own docs specifically so this crate's grammar reference
+stays the single source of truth for everything its own parser accepts.
+
+**Syntax:** `NAME kind=<value> field=value field=value ...` — a bare identifier name, then any
+number of whitespace-separated `key=value` fields (no leading device letter, no node list; a
+field's value is a single token with no internal whitespace, including a Python-list-literal
+value like `a=[[1,2],[3,4]]`).
+
+**Dispatch rule:** distinguished from an ordinary element instance line purely by shape, not by
+any reserved letter — no real SPICE element ever has a trailing field literally named `kind`
+(elements use positional value/model-name arguments, never a `kind=` selector), so a line whose
+second-or-later token starts with `kind=` is unambiguously a block statement instead. See
+[`ast::BlockInstance`] and `parser::is_block_instance_line`/`parser::parse_block_instance`
+(shared by both dialects) for the exact implementation.
+
+**Semantics:** none, at this layer — same as this parser doesn't know what a resistor *does*,
+it doesn't know what `kind=pid`/`kind=statespace`/etc. mean, only that the line has this shape.
+Every field's value (including `kind` itself) is captured as raw, unparsed text; a downstream
+builder (`general-mna`) is the one place that interprets `kind` and the rest of the fields.
+
+**Nesting:** a block statement nests inside a `.subckt` scope exactly like any other non-
+`.subckt`/`.ends` statement (see [`symbols::scope::build_scope_tree`]) — no special-casing was
+needed for that to already work correctly.
+
+**Backward compatibility:** the older convention some existing decks still use — a block/field
+line written as `* NAME kind=...`, disguised as an ordinary full-line SPICE comment so this
+parser would skip it entirely — continues to work exactly as before (still parses as
+[`ast::Statement::Comment`]). This section documents the new, first-class alternative; it
+doesn't require migrating anything.

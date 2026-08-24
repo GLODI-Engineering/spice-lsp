@@ -32,6 +32,8 @@ fn parse_line(line: &ProcessedLine, subckt_depth: u32) -> ParseResult {
 
     if trimmed.starts_with('.') {
         parse_dot_command(trimmed, span, subckt_depth)
+    } else if super::is_block_instance_line(trimmed) {
+        super::parse_block_instance(trimmed, span)
     } else if trimmed
         .chars()
         .next()

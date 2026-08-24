@@ -38,6 +38,10 @@ fn remap_statement_span(stmt: Statement, offset: usize) -> Statement {
             v.span = shift_span(v.span, offset);
             Statement::ElementInstance(v)
         }
+        Statement::BlockInstance(mut v) => {
+            v.span = shift_span(v.span, offset);
+            Statement::BlockInstance(v)
+        }
         Statement::Subckt(mut v) => {
             v.span = shift_span(v.span, offset);
             Statement::Subckt(v)

@@ -56,6 +56,28 @@ pub struct ElementInstance {
     pub span: LineSpan,
 }
 
+/// A block/signal-domain statement, e.g. `MOD1 kind=pwm freq=100000 in=PIDTF`. Distinguished
+/// from an [`ElementInstance`] purely by shape, not by any reserved device letter: a real SPICE
+/// element line never has a field literally named `kind`, so a line with a `kind=...` token
+/// among its trailing fields is unambiguously this variant instead — see
+/// [`crate::parser::ngspice::parse_line`]/[`crate::parser::xyce::parse_line`] for exactly where
+/// that dispatch happens. This crate doesn't know what `kind=pid`/`kind=statespace`/etc. *mean*
+/// — same as it doesn't know what a resistor means — it only recognizes the shape and captures
+/// every field's raw text; a downstream builder (`general-mna`) interprets `kind` and the rest
+/// of the fields (including any Python-list-literal field value like `a=[[1,2],[3,4]]`, kept
+/// here as an opaque raw string, same treatment [`Model::raw_params`] gets).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockInstance {
+    /// The block's own name, as declared (e.g. `"MOD1"`).
+    pub name: String,
+    /// Every `key=value` field on the line, in source order, including `kind` itself (not
+    /// pulled out separately — a downstream builder looks it up by key like any other field).
+    /// Each value is raw, unparsed text.
+    pub fields: Vec<(String, String)>,
+    /// Where in the source this statement was parsed from.
+    pub span: LineSpan,
+}
+
 /// A `.subckt` definition, e.g. `.subckt opamp in+ in- out gain=100`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subckt {
@@ -133,6 +155,10 @@ pub struct Func {
 pub enum Statement {
     /// A device/element instance line (`R1 1 2 100`, `X1 in out opamp`, ...).
     ElementInstance(ElementInstance),
+    /// A block/signal-domain statement (`MOD1 kind=pwm freq=100000 in=PIDTF`) — see
+    /// [`BlockInstance`]'s own doc comment for the dispatch rule that distinguishes this from
+    /// [`Statement::ElementInstance`].
+    BlockInstance(BlockInstance),
     /// A `.subckt` definition line (the body up to `.ends` is represented
     /// by the surrounding statements/scope structure — see
     /// [`crate::symbols::scope`] — not nested inside this variant).

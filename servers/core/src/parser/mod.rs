@@ -6,7 +6,7 @@
 //! matches the requested [`Dialect`] plus holds the shared [`ParseError`]/
 //! [`ParseResult`] types.
 
-use crate::ast::{LineSpan, Statement};
+use crate::ast::{BlockInstance, LineSpan, Statement};
 use crate::dialect::Dialect;
 use crate::lexer::ProcessedLine;
 
@@ -104,6 +104,48 @@ pub(super) fn split_model_name_type_params(rest: &str) -> Option<(String, String
     let model_type = after_name[..type_end].to_string();
     let raw_params = after_name[type_end..].trim().to_string();
     Some((name, model_type, raw_params))
+}
+
+/// A block/signal-domain statement is distinguished from a real element line purely by shape:
+/// no real SPICE element ever has a trailing field literally named `kind` (SPICE elements use
+/// positional value/model-name arguments, not a `kind=` selector), so a line whose second-or-
+/// later token starts with `kind=` is unambiguously this variant instead. Shared by both
+/// dialects — see [`crate::ast::BlockInstance`]'s own doc comment for the full rationale.
+pub(super) fn is_block_instance_line(line: &str) -> bool {
+    line.split_whitespace()
+        .skip(1)
+        .any(|t| t.starts_with("kind="))
+}
+
+/// Parses a block/signal-domain statement: `NAME key=value key=value ...`, including `kind=`
+/// as an ordinary field. Every value is captured as raw text — this crate doesn't interpret
+/// what any `kind=`/field means, only what shape the line has (see
+/// [`crate::ast::BlockInstance`]).
+pub(super) fn parse_block_instance(line: &str, span: LineSpan) -> ParseResult {
+    let mut tokens = line.split_whitespace();
+    let Some(name) = tokens.next() else {
+        return Err(ParseError {
+            message: "empty block statement line".into(),
+            span,
+        });
+    };
+    let mut fields = Vec::new();
+    for token in tokens {
+        let Some(eq_pos) = token.find('=') else {
+            return Err(ParseError {
+                message: format!("block statement field '{token}' is not in key=value form"),
+                span,
+            });
+        };
+        let key = token[..eq_pos].to_string();
+        let value = token[eq_pos + 1..].to_string();
+        fields.push((key, value));
+    }
+    Ok(Statement::BlockInstance(BlockInstance {
+        name: name.to_string(),
+        fields,
+        span,
+    }))
 }
 
 #[cfg(test)]
