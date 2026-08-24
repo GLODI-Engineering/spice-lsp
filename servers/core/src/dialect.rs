@@ -36,7 +36,7 @@ impl Dialect {
     /// dialects.
     ///
     /// ```
-    /// use spice_core::dialect::{Dialect, DeviceKind};
+    /// use general_spice_core::dialect::{Dialect, DeviceKind};
     ///
     /// assert_eq!(
     ///     Dialect::Ngspice.resolve_device_letter('P'),

@@ -1,12 +1,12 @@
 [package]
-name = "spice-core"
+name = "general-spice-core"
 version = "0.1.0"
 edition = "2021"
 description = "Dialect-agnostic SPICE netlist lexer/parser/symbol-table core (ngspice, Xyce, later a reference tool)."
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/Elvis-codeur/spice-lsp"
 homepage = "https://github.com/Elvis-codeur/spice-lsp"
-documentation = "https://docs.rs/spice-core"
+documentation = "https://docs.rs/general-spice-core"
 readme = "README.md"
 keywords = ["spice", "netlist", "ngspice", "xyce", "parser"]
 categories = ["parsing", "science"]
@@ -14,7 +14,7 @@ exclude = ["tests/fixtures/"]
 publish = false
 
 [lib]
-name = "spice_core"
+name = "general_spice_core"
 
 [dependencies]
 

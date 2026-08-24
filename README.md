@@ -1,14 +1,14 @@
 # spice-lsp
 
 [![CI](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/spice-core.svg)](https://crates.io/crates/spice-core)
-[![docs.rs](https://img.shields.io/docsrs/spice-core)](https://docs.rs/spice-core)
+[![crates.io](https://img.shields.io/crates/v/general-spice-core.svg)](https://crates.io/crates/general-spice-core)
+[![docs.rs](https://img.shields.io/docsrs/general-spice-core)](https://docs.rs/general-spice-core)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 Language tooling for SPICE-family circuit netlists — ngspice and Xyce
 today, a reference tool planned once reference documentation is available.
 
-The core is a Rust library, [`spice_core`](servers/core/), that parses
+The core is a Rust library, [`general_spice_core`](servers/core/), that parses
 netlist text into a structured AST and resolves symbols
 (`.subckt`/`.model` references, `.param` scoping, multi-file `.include`
 resolution) — the building blocks a language server needs (diagnostics,
@@ -38,11 +38,11 @@ and a reference tool support.
 
 ```toml
 [dependencies]
-spice-core = { path = "path/to/spice-lsp/servers/core" }
+general-spice-core = { path = "path/to/spice-lsp/servers/core" }
 ```
 
 ```rust
-use spice_core::{lexer, parser, Dialect};
+use general_spice_core::{lexer, parser, Dialect};
 
 let source = "Example circuit\nR1 1 0 1k\nC1 1 0 10n\n.end\n";
 let lines = lexer::preprocess(source, Dialect::Ngspice);
@@ -51,12 +51,12 @@ let statements = parser::parse_document(&lines, Dialect::Ngspice);
 
 See [`servers/core/README.md`](servers/core/README.md) for the full usage
 guide (diagnostics, expression parsing, multi-file resolution), or run
-`cargo doc -p spice-core --open` for the complete API reference.
+`cargo doc -p general-spice-core --open` for the complete API reference.
 
 ## Layout
 
 ```
-servers/core/      spice_core — the Rust parser/symbol-resolution library (see its README)
+servers/core/      general_spice_core — the Rust parser/symbol-resolution library (see its README)
 servers/           future home for other server-side pieces, e.g. a tower-lsp wrapper binary
 extension/         (not started) VS Code client extension (TypeScript)
 docs/GRAMMAR.md    the netlist grammar reference this crate is built against —
@@ -75,7 +75,7 @@ The primary target for this project is a separate Tauri + React desktop
 app (a circuit simulator front-end) whose netlist editor is Monaco. A Tauri
 backend is Rust, and Monaco doesn't need real LSP-over-JSON-RPC to get
 diagnostics/hover/completion — it has its own provider APIs you drive
-directly. So `spice_core` is designed to be embedded straight into that
+directly. So `general_spice_core` is designed to be embedded straight into that
 Rust backend via `#[tauri::command]`, with zero IPC/protocol overhead —
 not spawned as a subprocess speaking a wire protocol.
 

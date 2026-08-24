@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "spice-core"
+name = "general-spice-core"
 version = "0.1.0"

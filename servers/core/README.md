@@ -1,4 +1,4 @@
-# spice_core
+# general_spice_core
 
 A dialect-agnostic parser and symbol-resolution engine for SPICE-family
 circuit netlists — ngspice and Xyce today, a reference tool planned once reference
@@ -16,9 +16,9 @@ go-to-definition, and completion. It's designed to be consumed two ways:
    VS Code, Neovim, or any other LSP-capable editor — not implemented yet,
    but the core is structured so this is a thin adapter, not a rewrite.
 
-Full API docs: run `cargo doc -p spice-core --open` from the repo root, or
+Full API docs: run `cargo doc -p general-spice-core --open` from the repo root, or
 read the doc comments in `src/lib.rs` — they include runnable examples
-(`cargo test -p spice-core --doc`).
+(`cargo test -p general-spice-core --doc`).
 
 ## Status
 
@@ -50,9 +50,9 @@ Not published to crates.io. Use a path or git dependency:
 
 ```toml
 [dependencies]
-spice-core = { path = "../spice-lsp/servers/core" }
+general-spice-core = { path = "../spice-lsp/servers/core" }
 # or
-spice-core = { git = "https://github.com/Elvis-codeur/spice-lsp", package = "spice-core" }
+general-spice-core = { git = "https://github.com/Elvis-codeur/spice-lsp", package = "general-spice-core" }
 ```
 
 ## Usage
@@ -60,7 +60,7 @@ spice-core = { git = "https://github.com/Elvis-codeur/spice-lsp", package = "spi
 ### Parse a single file
 
 ```rust
-use spice_core::{lexer, parser, Dialect};
+use general_spice_core::{lexer, parser, Dialect};
 
 let source = "\
 Example RC circuit
@@ -92,7 +92,7 @@ unit test in this crate does for brevity).
 ### Get diagnostics
 
 ```rust
-use spice_core::{ast::Statement, lexer, parser, symbols, Dialect};
+use general_spice_core::{ast::Statement, lexer, parser, symbols, Dialect};
 
 let source = "circuit\nX1 in out amplifier\n.end\n";
 let lines = lexer::preprocess(source, Dialect::Ngspice);
@@ -118,8 +118,8 @@ for d in &subckt_diags {
 ### Parse expressions
 
 ```rust
-use spice_core::expr::ngspice_compiletime::parse_ngspice_compiletime;
-use spice_core::expr::xyce::parse_xyce;
+use general_spice_core::expr::ngspice_compiletime::parse_ngspice_compiletime;
+use general_spice_core::expr::xyce::parse_xyce;
 
 // ngspice's compile-time grammar (.param/.func/brace-expressions):
 let expr = parse_ngspice_compiletime("1k * 2 + sqrt(4)").unwrap();
@@ -134,12 +134,12 @@ let xyce_expr = parse_xyce("a ^ b").unwrap();
 ### Resolve multi-file `.include`/`.lib` netlists
 
 ```rust
-use spice_core::include::graph::resolve_includes;
-use spice_core::include::resolve::FakeFileSystem; // in production, implement
+use general_spice_core::include::graph::resolve_includes;
+use general_spice_core::include::resolve::FakeFileSystem; // in production, implement
                                                     // include::resolve::FileSystem
                                                     // over std::fs instead
-use spice_core::include::source_map::SourceMap;
-use spice_core::Dialect;
+use general_spice_core::include::source_map::SourceMap;
+use general_spice_core::Dialect;
 use std::path::Path;
 
 let mut fs = FakeFileSystem::new();
@@ -190,7 +190,7 @@ across every grammar area.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace          # unit tests + the real-netlist conformance suite + doctests
-cargo doc -p spice-core --open  # browse the full API docs
+cargo doc -p general-spice-core --open  # browse the full API docs
 ```
 
 See the repository root's `AGENTS.md` and `.claude/skills/` for the

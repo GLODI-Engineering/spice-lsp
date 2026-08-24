@@ -3,7 +3,7 @@
 //! `tests/fixtures/NOTICE.md` for where these files came from.
 //!
 //! This is deliberately NOT a "must fully parse" test: real production
-//! netlists exercise statement types beyond spice_core's current coverage
+//! netlists exercise statement types beyond general_spice_core's current coverage
 //! (see docs/GRAMMAR.md's phase plan), and that's expected. What this test
 //! actually guards:
 //!
@@ -21,12 +21,12 @@
 use std::fs;
 use std::path::Path;
 
-use spice_core::ast::Statement;
-use spice_core::dialect::Dialect;
-use spice_core::expr::{wiring_compiletime, wiring_runtime};
-use spice_core::lexer;
-use spice_core::parser;
-use spice_core::symbols::{model_resolution, scope, subckt_resolution, uniqueness};
+use general_spice_core::ast::Statement;
+use general_spice_core::dialect::Dialect;
+use general_spice_core::expr::{wiring_compiletime, wiring_runtime};
+use general_spice_core::lexer;
+use general_spice_core::parser;
+use general_spice_core::symbols::{model_resolution, scope, subckt_resolution, uniqueness};
 
 struct FileStats {
     path: String,

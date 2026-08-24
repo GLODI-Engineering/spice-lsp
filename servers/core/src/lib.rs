@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! `spice_core` — a dialect-agnostic parser and symbol-resolution engine
+//! `general_spice_core` — a dialect-agnostic parser and symbol-resolution engine
 //! for SPICE-family circuit netlists (ngspice and Xyce today; a reference tool
 //! planned once reference documentation is available).
 //!
@@ -77,7 +77,7 @@
 //! # Quick start: parsing a single file
 //!
 //! ```
-//! use spice_core::{ast::Statement, lexer, parser, Dialect};
+//! use general_spice_core::{ast::Statement, lexer, parser, Dialect};
 //!
 //! let source = "\
 //! Example RC circuit
@@ -104,7 +104,7 @@
 //! # Quick start: diagnostics (undefined subcircuit reference)
 //!
 //! ```
-//! use spice_core::{ast::Statement, lexer, parser, symbols, Dialect};
+//! use general_spice_core::{ast::Statement, lexer, parser, symbols, Dialect};
 //!
 //! let source = "\
 //! Circuit with a typo'd subckt reference
@@ -127,10 +127,10 @@
 //! # Quick start: multi-file `.include` resolution
 //!
 //! ```
-//! use spice_core::include::graph::resolve_includes;
-//! use spice_core::include::resolve::FakeFileSystem;
-//! use spice_core::include::source_map::SourceMap;
-//! use spice_core::Dialect;
+//! use general_spice_core::include::graph::resolve_includes;
+//! use general_spice_core::include::resolve::FakeFileSystem;
+//! use general_spice_core::include::source_map::SourceMap;
+//! use general_spice_core::Dialect;
 //! use std::path::Path;
 //!
 //! let mut fs = FakeFileSystem::new();
