@@ -1,7 +1,7 @@
 # general_spice_core
 
 A dialect-agnostic parser and symbol-resolution engine for SPICE-family
-circuit netlists — ngspice and Xyce today, a reference tool planned once reference
+circuit netlists — ngspice and Xyce today, a third proprietary dialect planned once reference
 docs are available. Pure Rust, no external dependencies.
 
 This crate does **not** simulate circuits. It turns netlist *text* into
@@ -42,7 +42,7 @@ What's not: full semantic validation of every statement type (some are
 captured structurally as raw text rather than deeply modeled — this is
 intentional, see `docs/GRAMMAR.md`'s phase plan), expression *evaluation*
 (this crate parses expressions into a typed tree; it doesn't compute their
-values), and a reference tool.
+values), and the third proprietary dialect (not yet targeted).
 
 ## Installation
 

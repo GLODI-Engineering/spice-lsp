@@ -19,8 +19,8 @@ Upstream: <https://ngspice.sourceforge.io/>
 ## `fixtures/xyce/`
 
 A mix of:
-- Xyce's own `test/` directory example netlists (`CircuitPKG`,
-  `XyceCInterface`, `a reference toolExamples`, etc.) — Xyce is distributed under
+- Xyce's own `test/` directory example netlists (`CircuitPKG` and several
+  other example/interface subdirectories) — Xyce is distributed under
   GPL-3.0 (see the upstream project's `COPYING` file). Included here only
   as small, unmodified test-input data files, not as Xyce source code.
 - Power-electronics converter benchmark netlists originally authored for

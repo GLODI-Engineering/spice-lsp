@@ -6,7 +6,7 @@
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 Language tooling for SPICE-family circuit netlists — ngspice and Xyce
-today, a reference tool planned once reference documentation is available.
+today, a third proprietary SPICE dialect planned once reference documentation is available.
 
 The core is a Rust library, [`general_spice_core`](servers/core/), that parses
 netlist text into a structured AST and resolves symbols
@@ -26,13 +26,13 @@ built against.
 
 **Not started yet:** the VS Code extension (`extension/`), an LSP-protocol
 wrapper (`tower-lsp`) for editor use outside a directly-embedding host app,
-and a reference tool support.
+and support for a third proprietary SPICE dialect.
 
-| Simulator | Status |
+| Dialect | Status |
 |---|---|
 | ngspice   | lexer, parser (devices + statements), expression grammar, symbol resolution, multi-file `.include`/`.lib` — all implemented and tested |
 | Xyce      | same coverage as ngspice |
-| a reference tool   | not started — reference docs not yet available |
+| (third proprietary dialect) | not started — reference docs not yet available |
 
 ## Quick start
 

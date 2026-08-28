@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
 //! `general_spice_core` — a dialect-agnostic parser and symbol-resolution engine
-//! for SPICE-family circuit netlists (ngspice and Xyce today; a reference tool
+//! for SPICE-family circuit netlists (ngspice and Xyce today; a third proprietary dialect
 //! planned once reference documentation is available).
 //!
 //! This crate does not simulate circuits. It turns netlist *text* into
@@ -27,7 +27,7 @@
 //! validate every SPICE statement type (some statements are captured
 //! structurally as raw text rather than semantically modeled — see
 //! `docs/GRAMMAR.md`'s phase plan for what's covered), or work with
-//! a reference tool netlists (not yet supported).
+//! that third proprietary dialect's netlists (not yet supported).
 //!
 //! # Architecture
 //!

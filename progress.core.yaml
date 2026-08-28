@@ -15,8 +15,8 @@
 #         from docs/GRAMMAR.md §6.4/§7 (.global/.ic/.nodeset/.options,
 #         analysis statements) that currently fall through to
 #         Statement::Unrecognized. Full expression EVALUATION (not just
-#         parsing) and a reference tool remain out of scope until a reference tool reference
-#         docs are available.
+#         parsing) and the third proprietary dialect remain out of scope until reference
+#         docs for it are available.
 #
 # ── Conventions ─────────────────────────────────────────────────────────────
 # Two agent tracks per epic:
@@ -60,7 +60,7 @@ phases:
     name: Expression-to-statement wiring
     epics: [CORE-26, CORE-27]
   - id: P7
-    name: Remaining statement coverage (non-a reference tool)
+    name: Remaining statement coverage (ngspice/Xyce only)
     epics: [CORE-28, CORE-29, CORE-30, CORE-31]
 
 epics:

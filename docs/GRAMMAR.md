@@ -1,4 +1,4 @@
-# SPICE Netlist Grammar — ngspice, Xyce, a reference tool
+# SPICE Netlist Grammar — ngspice, Xyce, a third proprietary dialect
 
 Unified reference for building language tooling (parser, LSP) over SPICE-family
 netlists. Language-agnostic on purpose — this describes *what* has to be
@@ -10,7 +10,7 @@ Sources:
 - Xyce 7.10 Users' Guide (`Xyce_UG.pdf`, converted locally with `pdftotext`) —
   used specifically to close gaps the Reference Guide left open (title-line
   rule, numeric scale-factor table, node-name hierarchy separator, `.MPDE`)
-- a reference tool — **not yet available**, see [§7](#7-a reference tool--tbd)
+- The third proprietary dialect — **not yet available**, see [§7](#7-third-dialect--tbd)
 
 Every statement below is tagged:
 - 🟢 **COMMON** — same syntax/semantics in ngspice and Xyce (verified against both manuals)
@@ -129,8 +129,9 @@ are the same value; `1000 == 1k == 1.0e3 == 1kHz`.
 
 - 🟠 **Xyce-specific:** complex numbers via `J` suffix — `.param a0=1.0+2.0J`.
 - 🔵 **ngspice-specific:** RKM notation (`2K7`, `4R7`) accepted only under
-  `ngbehavior=lt` (a reference tool compatibility mode) — this is likely the *real*
-  a reference tool number-parsing rule, worth confirming once a reference tool docs arrive.
+  `ngbehavior=lt` (ngspice's own third-party-dialect compatibility mode) —
+  this is likely the *real* number-parsing rule for that third dialect,
+  worth confirming once reference docs for it arrive.
 - 🟠 **Xyce-specific:** `a` (atto, 1e-18) is **not** enabled by default —
   bare `a` normally reads as amperes-suffix noise; `-hspice-ext units`
   command-line flag re-enables the atto interpretation.
@@ -206,7 +207,7 @@ default-value wording differences):
   `Q6 VC 4 11 [SUB] LAXPNP` — to disambiguate from a model name
 
 **⚠️ Same-letter, different-device collisions found: `P`, `U`, and (once
-a reference tool is in scope) very likely more. A dialect-agnostic core grammar must
+the third proprietary dialect is in scope) very likely more. A dialect-agnostic core grammar must
 never assume a device-letter table is shared — it must be a per-dialect
 lookup.**
 
@@ -682,8 +683,8 @@ possible).
    two independent grammars, and not as one grammar with if/else dialect
    checks scattered through it. The 🟢/🔵/🟠/🟡 tagging in this document is
    meant to map directly onto that architecture — a `commonGrammar` module
-   plus `ngspiceExtensions`/`xyceExtensions` (and later `a reference toolExtensions`)
-   overlay modules, each overlay supplying its own device table, operator
+   plus `ngspiceExtensions`/`xyceExtensions` (and later a third-dialect
+   overlay module) — each overlay supplying its own device table, operator
    table, and function table on top of the shared core. This is the
    structure the implementation (§ language discussion, TBD) should follow.
 3. **Expression parsing needs a context tag**, at minimum: `{compile-time |
@@ -749,35 +750,33 @@ possible).
 
 ---
 
-## 11. a reference tool — TBD
+## 11. Third dialect — TBD
 
-a reference tool reference material has not been provided yet. Placeholder based on
-general knowledge only — **treat everything in this section as unverified**
-until real docs are supplied and this section is rewritten from them.
+Reference material for the third proprietary SPICE dialect this project plans to eventually
+support has not been provided yet. Placeholder based on general knowledge only — **treat
+everything in this section as unverified** until real docs are supplied and this section is
+rewritten from them.
 
 Known/likely facts to verify:
-- a reference tool is a SPICE3-derived proprietary simulator (Analog Devices/Linear
-  Technology), primarily driven through its own schematic format (`.asc`)
-  but able to run/export plain-text `.net`/`.cir` netlists — the netlist
-  syntax itself should be close to classic SPICE3/ngspice-native syntax.
-  ngspice's own `ngbehavior=lt` compatibility mode (§2 above) is likely the
-  best *proxy* for a reference tool's actual number-parsing and behavioral-source
-  quirks until primary docs arrive — notably RKM notation (`2K7`, `4R7`) and
-  specific `m`/`f`/`meg` disambiguation rules already captured there.
-- a reference tool has a native `.step` directive (closer to Xyce's `.STEP` than to
-  ngspice's emulate-via-`.control` approach) — needs verification of exact
-  syntax.
-- a reference tool ships its own component/model library and symbol format distinct
-  from either ngspice's or Xyce's model libraries — out of scope for netlist
-  *grammar* but relevant for a future "resolve model reference" LSP feature.
-- Licensing note already discussed separately: parsing/tooling over
-  a reference tool's plain-text netlist format (not its binary or proprietary model
-  library content) is not expected to raise EULA concerns, but that was
-  general orientation, not confirmed legal advice.
+- This is a SPICE3-derived proprietary simulator from a well-known analog/power-semiconductor
+  vendor, primarily driven through its own schematic format (`.asc`) but able to run/export
+  plain-text `.net`/`.cir` netlists — the netlist syntax itself should be close to classic
+  SPICE3/ngspice-native syntax. ngspice's own third-party-dialect compatibility mode (§2 above)
+  is likely the best *proxy* for this dialect's actual number-parsing and behavioral-source
+  quirks until primary docs arrive — notably RKM notation (`2K7`, `4R7`) and specific
+  `m`/`f`/`meg` disambiguation rules already captured there.
+- It has a native `.step` directive (closer to Xyce's `.STEP` than to ngspice's
+  emulate-via-`.control` approach) — needs verification of exact syntax.
+- It ships its own component/model library and symbol format distinct from either ngspice's
+  or Xyce's model libraries — out of scope for netlist *grammar* but relevant for a future
+  "resolve model reference" LSP feature.
+- Licensing note already discussed separately: parsing/tooling over this dialect's plain-text
+  netlist format (not its binary or proprietary model library content) is not expected to
+  raise EULA concerns, but that was general orientation, not confirmed legal advice.
 
-**Action item:** once a reference tool docs are added to the docs folder, repeat the
-same extraction-agent process used for ngspice/Xyce and merge into this
-section with the same 🟢/🔵/🟠/🟡-style tagging (adding a 🟣 a reference tool tag).
+**Action item:** once reference docs for the third dialect are added to the docs folder, repeat
+the same extraction-agent process used for ngspice/Xyce and merge into this section with the
+same 🟢/🔵/🟠/🟡-style tagging (adding a 🟣 tag for it).
 
 ## 12. Project-specific extension: block/signal-domain statements
 

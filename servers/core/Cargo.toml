@@ -2,7 +2,7 @@
 name = "general-spice-core"
 version = "0.1.0"
 edition = "2021"
-description = "Dialect-agnostic SPICE netlist lexer/parser/symbol-table core (ngspice, Xyce, later a reference tool)."
+description = "Dialect-agnostic SPICE netlist lexer/parser/symbol-table core (ngspice, Xyce, a third proprietary dialect later)."
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/Elvis-codeur/spice-lsp"
 homepage = "https://github.com/Elvis-codeur/spice-lsp"

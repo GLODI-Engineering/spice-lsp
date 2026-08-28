@@ -47,6 +47,15 @@ repos:
         files: '^docs/gotchas/GOTCHA-.*\.md$'
         pass_filenames: false
 
+  # ── Local style checks ──────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: style-guard
+        name: local style checks
+        language: system
+        entry: bash scripts/style-guard.sh
+        pass_filenames: false
+
   # -------------------------------------------------------------------------
   # TS / JS / JSON — biome (local hook so the pinned version in package.json wins).
   # -------------------------------------------------------------------------
