@@ -117,12 +117,57 @@ pub(super) fn is_block_instance_line(line: &str) -> bool {
         .any(|t| t.starts_with("kind="))
 }
 
+/// Splits `line` on whitespace like [`str::split_whitespace`], except a `"`-delimited span is
+/// kept as one token (its own interior whitespace included) with the surrounding quotes
+/// stripped from the returned token — the only way a `kind=` field's value can itself contain a
+/// space (e.g. a file path through a directory whose name has one), since bare whitespace
+/// always ends a token otherwise. An unterminated `"` (no matching close before the line ends)
+/// is an error, not silently swallowed into one giant trailing token.
+fn split_respecting_double_quotes(line: &str) -> Result<Vec<String>, &'static str> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut token_had_content = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                token_had_content = true;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if token_had_content {
+                    tokens.push(std::mem::take(&mut current));
+                    token_had_content = false;
+                }
+            }
+            c => {
+                current.push(c);
+                token_had_content = true;
+            }
+        }
+    }
+    if in_quotes {
+        return Err("unterminated '\"' in block statement line");
+    }
+    if token_had_content {
+        tokens.push(current);
+    }
+    Ok(tokens)
+}
+
 /// Parses a block/signal-domain statement: `NAME key=value key=value ...`, including `kind=`
 /// as an ordinary field. Every value is captured as raw text — this crate doesn't interpret
 /// what any `kind=`/field means, only what shape the line has (see
-/// [`crate::ast::BlockInstance`]).
+/// [`crate::ast::BlockInstance`]). A value may be `"double-quoted"` to include whitespace (the
+/// quotes themselves are stripped, not part of the value) — required for e.g. a `kind=cscript`
+/// `lib=` path through a directory whose name has a space in it, since bare whitespace outside
+/// quotes always ends a token, the same as every other field.
 pub(super) fn parse_block_instance(line: &str, span: LineSpan) -> ParseResult {
-    let mut tokens = line.split_whitespace();
+    let raw_tokens = split_respecting_double_quotes(line).map_err(|message| ParseError {
+        message: message.to_string(),
+        span: span.clone(),
+    })?;
+    let mut tokens = raw_tokens.into_iter();
     let Some(name) = tokens.next() else {
         return Err(ParseError {
             message: "empty block statement line".into(),
@@ -142,7 +187,7 @@ pub(super) fn parse_block_instance(line: &str, span: LineSpan) -> ParseResult {
         fields.push((key, value));
     }
     Ok(Statement::BlockInstance(BlockInstance {
-        name: name.to_string(),
+        name,
         fields,
         span,
     }))

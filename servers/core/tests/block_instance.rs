@@ -118,3 +118,64 @@ fn block_instance_nests_inside_a_subckt_scope() {
         "MOD1 block instance should be nested inside the buck subckt scope"
     );
 }
+
+#[test]
+fn a_double_quoted_field_value_may_contain_whitespace() {
+    // A path through a directory with a space in its name (e.g. `kind=cscript lib=...`) has no
+    // other way to survive whitespace tokenization -- found and fixed after a real doc-verify
+    // run against a `lib=` path through such a directory produced a garbled parse error instead
+    // of a clean one.
+    let stmt = parse_one(
+        r#"G1 kind=cscript lib="my libs/gain.so" in=SRC"#,
+        Dialect::Ngspice,
+    );
+    match stmt {
+        Statement::BlockInstance(b) => {
+            assert_eq!(b.name, "G1");
+            assert_eq!(
+                b.fields,
+                vec![
+                    ("kind".to_string(), "cscript".to_string()),
+                    ("lib".to_string(), "my libs/gain.so".to_string()),
+                    ("in".to_string(), "SRC".to_string()),
+                ]
+            );
+        }
+        other => panic!("expected BlockInstance, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unquoted_field_value_is_unaffected_by_quote_support() {
+    // Quote support must not change behavior for the common, no-whitespace-path case.
+    let stmt = parse_one("G1 kind=cscript lib=gain.so in=SRC\n", Dialect::Ngspice);
+    match stmt {
+        Statement::BlockInstance(b) => {
+            assert_eq!(
+                b.fields,
+                vec![
+                    ("kind".to_string(), "cscript".to_string()),
+                    ("lib".to_string(), "gain.so".to_string()),
+                    ("in".to_string(), "SRC".to_string()),
+                ]
+            );
+        }
+        other => panic!("expected BlockInstance, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unterminated_quote_in_a_block_statement_is_a_clear_error() {
+    let processed = preprocess(
+        "G1 kind=cscript lib=\"unterminated in=SRC\n",
+        Dialect::Ngspice,
+    );
+    let results = parser::parse(&processed, Dialect::Ngspice);
+    assert_eq!(results.len(), 1);
+    let err = results[0].clone().expect_err("expected a parse error");
+    assert!(
+        err.message.contains("unterminated"),
+        "expected an 'unterminated' error, got: {}",
+        err.message
+    );
+}
