@@ -60,7 +60,7 @@ pub struct ElementInstance {
 /// from an [`ElementInstance`] purely by shape, not by any reserved device letter: a real SPICE
 /// element line never has a field literally named `kind`, so a line with a `kind=...` token
 /// among its trailing fields is unambiguously this variant instead — see
-/// [`crate::parser::ngspice::parse_line`]/[`crate::parser::xyce::parse_line`] for exactly where
+/// [`crate::parser::ngspice::parse`]/[`crate::parser::xyce::parse`] for exactly where
 /// that dispatch happens. This crate doesn't know what `kind=pid`/`kind=statespace`/etc. *mean*
 /// — same as it doesn't know what a resistor means — it only recognizes the shape and captures
 /// every field's raw text; a downstream builder (`general-mna`) interprets `kind` and the rest
