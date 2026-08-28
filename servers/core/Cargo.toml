@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["spice", "netlist", "ngspice", "xyce", "parser"]
 categories = ["parsing", "science"]
 exclude = ["tests/fixtures/"]
-publish = false
+publish = true
 
 [lib]
 name = "general_spice_core"
