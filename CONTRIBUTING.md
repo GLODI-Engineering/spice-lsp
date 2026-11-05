@@ -2,53 +2,80 @@
 
 Thanks for considering a contribution to `spice-lsp` / `spice-core`.
 
-## Before you start
+This repository is part of the `general-simulator` toolchain. The same
+workflow applies across all of them, so that a change can be traced from the
+problem that prompted it to the commit that closed it.
 
-- For anything beyond a small fix (a new grammar feature, a new epic-sized
-  chunk of work), open an issue first to discuss the approach — this
-  project follows an epic-based workflow tracked in `progress.core.yaml`;
-  large unplanned PRs are harder to review and merge.
-- Bug fixes and doc improvements are always welcome without prior
-  discussion.
+## The workflow
 
-## Development setup
+**1. A milestone, when the work is bigger than one change.**
 
-```bash
-git clone https://github.com/Elvis-codeur/spice-lsp
-cd spice-lsp
-pre-commit install   # installs the repo's pre-commit hooks
+Anything that will take more than a single pull request gets a milestone —
+a release, a feature with several parts, a migration. The milestone is what
+answers "is this finished?", and it is the only thing that can.
+
+Small, self-contained fixes do not need one.
+
+**2. An issue, always.**
+
+Every change starts from an issue, including your own. Write what is wrong
+or missing and how you would know it was fixed — not the solution you have
+in mind. An issue that only says what to do cannot be checked against
+reality later.
+
+Attach it to its milestone if it has one.
+
+**3. A branch off `master`.**
+
+Name it for the work: `fix/wire-endpoint-validation`, not `patch-2`.
+
+**4. Commits that say why.**
+
+Conventional Commits, enforced where a `commit-msg` hook is installed:
+`feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`,
+`revert`, with `!` for a breaking change.
+
+The body is for the reasoning: what was actually wrong, what you ruled out,
+what you decided not to do. The diff already says what changed. Reference
+the issue — `Refs #12` while work is in progress, `Closes #12` on the commit
+that finishes it, so the issue closes with the commit that closed it rather
+than by hand afterwards.
+
+**5. A pull request, with CI green.**
+
+CI runs the same gate you ran locally. **A red build is not reviewable** —
+fix it or say why it is unrelated. Never merge around it.
+
+**6. Close with the commit, not after it.**
+
+`Closes #12` in the merge means the issue carries a permanent link to the
+change that resolved it. Closing an issue by hand loses that, and six months
+later nobody can tell which commit it was.
+
+A milestone closes when its issues do. If an issue in it turns out not to be
+needed, close it saying so — do not let it sit so the milestone never ends.
+
+## The gate
+
+Run this before opening a pull request. CI runs the same thing.
+
+```sh
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-## Making a change
+Public items need a `///` doc comment: `#![warn(missing_docs)]` is enabled
+crate-wide and CI treats `cargo doc` warnings as errors.
 
-1. Create a branch off `master`.
-2. Make your change. If you're touching `servers/core`, add or update tests
-   in the same crate — see `AGENTS.md` for the project's testing
-   conventions (unit tests live next to the code they test; real-file
-   conformance tests live in `servers/core/tests/real_netlists.rs`).
-3. Run the gate before opening a PR:
+## Reporting a bug
 
-   ```bash
-   cargo fmt --all
-   cargo clippy --workspace --all-targets -- -D warnings
-   cargo test --workspace
-   ```
+Include what you ran, what happened and what you expected. For anything
+involving a circuit, attach the smallest netlist or schematic that shows it —
+a reproduction that takes a minute to run is worth more than a paragraph of
+description.
 
-4. If you added or changed a public item, make sure it has a `///` doc
-   comment — `#![warn(missing_docs)]` is enabled crate-wide and CI treats
-   `cargo doc` warnings as errors.
-5. Open a PR describing what changed and why. CI (`.github/workflows/ci.yml`)
-   runs `fmt`, `clippy`, `test`, and `doc` automatically.
-
-## Reporting bugs
-
-Please include a minimal netlist snippet that reproduces the issue,
-which dialect (ngspice/Xyce) it's under, and what you expected vs. what
-happened. If you found the bug against a real netlist file (not synthetic),
-mention the source — real-world conformance testing is how most bugs in
-this crate have been found so far.
-
-## License
-
-By contributing, you agree that your contributions are licensed under the
-project's AGPL-3.0 license (see `LICENSE`).
+If the simulator produced a number you believe is wrong, say what you
+expected and why, with the analytic expression if there is one. "The output
+is wrong" cannot be acted on; "V_out should be V_in·D = 14.4 V and I measure
+9.8 V" can.
