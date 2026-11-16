@@ -46,13 +46,18 @@ values), and the third proprietary dialect (not yet targeted).
 
 ## Installation
 
-Not published to crates.io. Use a path or git dependency:
+```toml
+[dependencies]
+general-spice-core = "0.1"
+```
+
+Or, to track this repository rather than a release:
 
 ```toml
 [dependencies]
 general-spice-core = { path = "../spice-lsp/servers/core" }
 # or
-general-spice-core = { git = "https://github.com/Elvis-codeur/spice-lsp", package = "general-spice-core" }
+general-spice-core = { git = "https://github.com/GLODI-Engineering/spice-lsp", package = "general-spice-core" }
 ```
 
 ## Usage

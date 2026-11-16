@@ -1,6 +1,6 @@
 # spice-lsp
 
-[![CI](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/Elvis-codeur/spice-lsp/actions/workflows/ci.yml)
+[![CI](https://github.com/GLODI-Engineering/spice-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/GLODI-Engineering/spice-lsp/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/general-spice-core.svg)](https://crates.io/crates/general-spice-core)
 [![docs.rs](https://img.shields.io/docsrs/general-spice-core)](https://docs.rs/general-spice-core)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
