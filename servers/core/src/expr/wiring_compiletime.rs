@@ -71,12 +71,10 @@ fn wire_in_scope(
                     }
                 }
             }
-            Statement::Model(model) => {
-                if is_brace_expression(&model.raw_params) {
-                    let inner = &model.raw_params[1..model.raw_params.len() - 1];
-                    let parsed = parse_expr(inner, dialect);
-                    results.push((model.span.clone(), parsed.0, parsed.1));
-                }
+            Statement::Model(model) if is_brace_expression(&model.raw_params) => {
+                let inner = &model.raw_params[1..model.raw_params.len() - 1];
+                let parsed = parse_expr(inner, dialect);
+                results.push((model.span.clone(), parsed.0, parsed.1));
             }
             _ => {}
         }
