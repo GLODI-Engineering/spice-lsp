@@ -29,7 +29,7 @@ built against.
 library, and support for a third proprietary SPICE dialect. There is no editor client here and
 no JavaScript toolchain waiting for one — when a wrapper is built, its client arrives with the
 toolchain it needs. Netlist editing in VS Code today is
-[general-simulator-gui-for-vscode](https://github.com/GLODI-Engineering/general-simulator-gui-for-vscode),
+[Omni Schematics](https://github.com/GLODI-Engineering/omni-schematics),
 a different project and not a client of this one.
 
 | Dialect | Status |
