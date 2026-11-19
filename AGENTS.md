@@ -27,10 +27,9 @@ to a spec, and epics under `area: core` should point to its sections.
 ```
 servers/core/     Rust crate `spice_core` — the dialect-agnostic engine
 servers/lsp/      (future) tower-lsp binary wrapping spice_core
-extension/        (future) VS Code client extension (TypeScript)
 docs/GRAMMAR.md   netlist grammar reference — the closest thing to a spec
 docs/gotchas/      institutional-memory bug records, see /record-gotcha
-progress.core.yaml epic plan for servers/core
+docs/progress.core.yaml  epic plan for servers/core
 ```
 
 ## Architecture invariant
@@ -83,12 +82,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-TypeScript (`extension/`, once it exists):
-```bash
-pnpm exec biome check --write .
-pnpm --filter <package> typecheck
-pnpm --filter <package> test
-```
+There is no JavaScript or TypeScript in this repository, and no toolchain for it: the
+`package.json`/`pnpm`/`biome` set-up was removed once it became clear it was linting a tree with
+zero `.ts` files. An editor client, if one is ever written here, brings its own toolchain and its
+own gates in the same change.
 
 Never use `--no-verify`. Fix the root cause of a failing hook or gate.
 
@@ -96,8 +93,7 @@ Never use `--no-verify`. Fix the root cause of a failing hook or gate.
 
 Conventional commits, enforced by the `commit-msg` pre-commit hook:
 `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert(scope): ...`.
-Scope should match the epic's `area:` field (e.g. `core`, `lexer`, `parser`,
-`extension`).
+Scope should match the epic's `area:` field (e.g. `core`, `lexer`, `parser`).
 
 ## Two-agent-track convention (progress files)
 

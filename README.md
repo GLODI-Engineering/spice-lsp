@@ -18,7 +18,7 @@ and is what you depend on.
 
 ## Status
 
-**Core library: all 31 planned epics complete** (`progress.core.yaml`),
+**Core library: all 31 planned epics complete** (`docs/progress.core.yaml`),
 tested against 71 real, independently-authored ngspice and Xyce netlists
 in addition to ~380 unit tests (`servers/core/tests/`). See
 [`servers/core/README.md`](servers/core/README.md) for how to use it and
@@ -26,10 +26,11 @@ in addition to ~380 unit tests (`servers/core/tests/`). See
 built against.
 
 **Not started:** an LSP-protocol wrapper (`tower-lsp`) for editors that cannot link a Rust
-library, and support for a third proprietary SPICE dialect. The `extension/` directory is a
-placeholder and not a plan — netlist editing in VS Code is
+library, and support for a third proprietary SPICE dialect. There is no editor client here and
+no JavaScript toolchain waiting for one — when a wrapper is built, its client arrives with the
+toolchain it needs. Netlist editing in VS Code today is
 [general-simulator-gui-for-vscode](https://github.com/GLODI-Engineering/general-simulator-gui-for-vscode),
-which is a different project and not a client of this one.
+a different project and not a client of this one.
 
 | Dialect | Status |
 |---|---|
@@ -61,11 +62,11 @@ guide (diagnostics, expression parsing, multi-file resolution), or run
 ```
 servers/core/      general_spice_core — the Rust parser/symbol-resolution library (see its README)
 servers/           future home for other server-side pieces, e.g. a tower-lsp wrapper binary
-extension/         placeholder, holds only a README -- see Status
 docs/GRAMMAR.md    the netlist grammar reference this crate is built against —
                     common vs. ngspice-specific vs. Xyce-specific, with citations
                     back to each simulator's own manual
-progress.core.yaml  epic-by-epic build log for servers/core (what's done, how it
+docs/progress.core.yaml
+                   epic-by-epic build log for servers/core (what's done, how it
                     was verified)
 docs/gotchas/       institutional-memory records for non-obvious bugs found along
                     the way (see AGENTS.md's /record-gotcha skill)

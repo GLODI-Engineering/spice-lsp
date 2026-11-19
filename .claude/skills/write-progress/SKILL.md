@@ -43,7 +43,7 @@ The progress file says *what* and *when*, and tracks *whether it's done*.
 progress.<scope>.yaml
 ```
 
-Examples for this repo: `progress.core.yaml` (the Rust `spice_core` crate),
+Examples for this repo: `docs/progress.core.yaml` (the Rust `spice_core` crate),
 `progress.extension.yaml` (the VS Code TS client, once it exists),
 `progress.lsp.yaml` (the `tower-lsp` binary wrapper, once it exists).
 

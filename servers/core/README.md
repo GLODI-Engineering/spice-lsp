@@ -24,7 +24,7 @@ read the doc comments in `src/lib.rs` — they include runnable examples
 
 ## Status
 
-All 31 planned "v1.1" epics are complete (`progress.core.yaml`) and the
+All 31 planned "v1.1" epics are complete (`docs/progress.core.yaml`) and the
 crate has been tested against 71 real, independently-authored ngspice and
 Xyce netlists (`tests/real_netlists.rs`, `tests/fixtures/`) — not just
 hand-written unit fixtures. See `docs/GRAMMAR.md` in the repository root

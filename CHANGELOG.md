@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 The crate has not been published since 0.1.0. What has landed since is recorded epic by epic in
-`progress.core.yaml`, which is the log this project actually keeps; this file is updated when a
+`docs/progress.core.yaml`, which is the log this project actually keeps; this file is updated when a
 version is published.
 
 ## [0.1.0] - 2026-07-31

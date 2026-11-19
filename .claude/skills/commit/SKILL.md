@@ -21,25 +21,16 @@ a `git commit` without completing every step below first.
 # Rust (servers/core, and any future servers/* Rust crate)
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
-
-# TypeScript / JSON (extension/, once it exists; also biome.json/package.json etc at root)
-pnpm exec biome check --write .
 ```
 
-If clippy or biome report unfixable errors, fix them manually before
-continuing.
+If clippy reports unfixable errors, fix them manually before continuing.
 
 ---
 
 ## Step 2 — Type-check
 
-```bash
-# TypeScript, once extension/ exists
-pnpm --filter <package> typecheck
-```
-
 Rust's type-check is implied by `cargo clippy`/`cargo test` — no separate
-step.
+step, and there is no other language in this repository.
 
 ---
 
@@ -49,9 +40,6 @@ Run every test that covers the changed code. When in doubt, run all of them.
 
 ```bash
 cargo test --workspace
-
-# TypeScript, once test files exist
-pnpm --filter <package> test
 ```
 
 All tests must be green (or legitimately marked as an expected-failure with

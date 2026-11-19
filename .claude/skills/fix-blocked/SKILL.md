@@ -68,9 +68,6 @@ precise one first — do not guess.
 
 ```bash
 cargo test -p spice-core test_name -- --exact --nocapture
-
-# TypeScript
-pnpm --filter <package> test -t "test name"
 ```
 
 Confirm the failure matches the note. If it now passes (someone else fixed
@@ -138,7 +135,7 @@ Remove the old `blocked:` field entirely. Leave all other fields unchanged.
 ## Step 7 — Commit the progress file update
 
 ```bash
-git add progress.core.yaml   # or the relevant progress file
+git add docs/progress.core.yaml   # or the relevant progress file
 git commit -m "chore(progress): mark <EPIC-ID> review after fix"
 ```
 
