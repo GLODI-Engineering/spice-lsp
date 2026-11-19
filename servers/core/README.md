@@ -8,13 +8,15 @@ This crate does **not** simulate circuits. It turns netlist *text* into
 structured data an editor or tool can use for diagnostics, hover,
 go-to-definition, and completion. It's designed to be consumed two ways:
 
-1. **Embedded directly** as a Cargo dependency — e.g. from a Tauri app's
-   Rust backend, called straight from `#[tauri::command]` handlers with no
-   IPC/protocol overhead. This is the primary target this crate was built
-   for.
-2. **Wrapped in a `tower-lsp` binary** that speaks real LSP over stdio for
-   VS Code, Neovim, or any other LSP-capable editor — not implemented yet,
-   but the core is structured so this is a thin adapter, not a rewrite.
+1. **Linked directly** as a Cargo dependency, with the AST handed to the next stage as typed
+   data and no protocol in between. This is what uses it today:
+   [`general-mna`](https://github.com/GLODI-Engineering/general-mna) builds
+   modified-nodal-analysis matrices from the parse result, and the
+   [general-simulator](https://github.com/GLODI-Engineering/general-simulator) engine names it
+   as a dependency of two of its own crates.
+2. **Wrapped in a `tower-lsp` binary** that speaks real LSP over stdio, for editors that cannot
+   link a Rust library — not implemented yet, but the core is structured so this is a thin
+   adapter, not a rewrite.
 
 Full API docs: run `cargo doc -p general-spice-core --open` from the repo root, or
 read the doc comments in `src/lib.rs` — they include runnable examples

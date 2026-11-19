@@ -7,10 +7,11 @@
 //! structured data an editor or tool can use for diagnostics, hover,
 //! go-to-definition, and completion — the kind of thing a language server
 //! needs, without being tied to the Language Server Protocol itself. It is
-//! consumed two ways in practice: embedded directly as a library (e.g. from
-//! a Tauri app's Rust backend, calling straight into these functions with
-//! no IPC layer involved), or wrapped by a separate `tower-lsp`-based
-//! binary that speaks LSP over stdio for editors.
+//! consumed two ways: linked directly as a library, with the AST handed to the
+//! next stage as typed data and no protocol in between -- which is what
+//! `general-mna` and the `general-simulator` engine both do today -- or
+//! wrapped by a separate `tower-lsp`-based binary speaking LSP over stdio, for
+//! editors that cannot link a Rust library.
 //!
 //! # Is this crate right for your use case?
 //!

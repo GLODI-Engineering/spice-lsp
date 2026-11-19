@@ -7,13 +7,16 @@ first; read it yourself before touching code.
 
 A dialect-agnostic SPICE netlist parser/analysis core (Rust), consumed two
 ways:
-1. **Primary target** — embedded directly as a Cargo dependency inside
-   `general-simulator`'s Tauri backend (`apps/desktop/src-tauri`), exposed to
-   its Monaco-based netlist editor via `#[tauri::command]`. No LSP protocol
-   involved for this path — native function calls.
+1. **Primary target** — linked directly as a Cargo dependency. `general-mna`
+   turns the parse result into modified-nodal-analysis matrices, and
+   `general-simulator`'s `dae-runtime` and `general-simulator-cli` depend on
+   this crate as well. Native function calls, no protocol.
 2. **Secondary target** — later wrapped with `tower-lsp` as a standalone
-   binary speaking real LSP over stdio, for VS Code / Neovim / any other
-   LSP-capable editor. Same core, thin adapter.
+   binary speaking real LSP over stdio, for editors that cannot link a Rust
+   library. Same core, thin adapter.
+
+The Tauri desktop application this section used to name as the primary target
+no longer exists, and `general-simulator` has no `apps/desktop/src-tauri`.
 
 See `docs/GRAMMAR.md` for the netlist grammar reference (ngspice/Xyce, common
 vs. dialect-specific) — that document is the closest thing this project has

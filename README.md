@@ -5,15 +5,16 @@
 [![docs.rs](https://img.shields.io/docsrs/general-spice-core)](https://docs.rs/general-spice-core)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-Language tooling for SPICE-family circuit netlists — ngspice and Xyce
-today, a third proprietary SPICE dialect planned once reference documentation is available.
+**What this repository ships today is a library, not a language server.**
+[`general-spice-core`](servers/core/) parses SPICE-family netlist text — ngspice and Xyce, with
+a third proprietary dialect planned once reference documentation is available — into a
+structured AST and resolves symbols (`.subckt`/`.model` references, `.param` scoping, multi-file
+`.include` resolution). Those are the building blocks a language server needs (diagnostics,
+hover, go-to-definition, completion), and they are useful to anything else that has to
+understand a netlist, which is what they are used for.
 
-The core is a Rust library, [`general_spice_core`](servers/core/), that parses
-netlist text into a structured AST and resolves symbols
-(`.subckt`/`.model` references, `.param` scoping, multi-file `.include`
-resolution) — the building blocks a language server needs (diagnostics,
-hover, go-to-definition, completion), without being tied to the Language
-Server Protocol itself.
+The repository is named for the LSP wrapper that does not exist yet. The crate is on crates.io
+and is what you depend on.
 
 ## Status
 
@@ -24,9 +25,11 @@ in addition to ~380 unit tests (`servers/core/tests/`). See
 [`docs/GRAMMAR.md`](docs/GRAMMAR.md) for the full grammar reference it's
 built against.
 
-**Not started yet:** the VS Code extension (`extension/`), an LSP-protocol
-wrapper (`tower-lsp`) for editor use outside a directly-embedding host app,
-and support for a third proprietary SPICE dialect.
+**Not started:** an LSP-protocol wrapper (`tower-lsp`) for editors that cannot link a Rust
+library, and support for a third proprietary SPICE dialect. The `extension/` directory is a
+placeholder and not a plan — netlist editing in VS Code is
+[general-simulator-gui-for-vscode](https://github.com/GLODI-Engineering/general-simulator-gui-for-vscode),
+which is a different project and not a client of this one.
 
 | Dialect | Status |
 |---|---|
@@ -38,7 +41,7 @@ and support for a third proprietary SPICE dialect.
 
 ```toml
 [dependencies]
-general-spice-core = { path = "path/to/spice-lsp/servers/core" }
+general-spice-core = "0.1"
 ```
 
 ```rust
@@ -58,7 +61,7 @@ guide (diagnostics, expression parsing, multi-file resolution), or run
 ```
 servers/core/      general_spice_core — the Rust parser/symbol-resolution library (see its README)
 servers/           future home for other server-side pieces, e.g. a tower-lsp wrapper binary
-extension/         (not started) VS Code client extension (TypeScript)
+extension/         placeholder, holds only a README -- see Status
 docs/GRAMMAR.md    the netlist grammar reference this crate is built against —
                     common vs. ngspice-specific vs. Xyce-specific, with citations
                     back to each simulator's own manual
@@ -71,21 +74,22 @@ AGENTS.md          project conventions, architecture invariants, agent workflow
 
 ## Why a Rust library instead of "just" an LSP server
 
-The primary target for this project is a separate Tauri + React desktop
-app (a circuit simulator front-end) whose netlist editor is Monaco. A Tauri
-backend is Rust, and Monaco doesn't need real LSP-over-JSON-RPC to get
-diagnostics/hover/completion — it has its own provider APIs you drive
-directly. So `general_spice_core` is designed to be embedded straight into that
-Rust backend via `#[tauri::command]`, with zero IPC/protocol overhead —
-not spawned as a subprocess speaking a wire protocol.
+Because the consumer is a Rust program, not an editor process.
+[`general-mna`](https://github.com/GLODI-Engineering/general-mna) links this crate to turn a
+netlist into modified-nodal-analysis matrices, and the
+[general-simulator](https://github.com/GLODI-Engineering/general-simulator) engine links it too
+— `crates/dae-runtime` and `crates/general-simulator-cli` both name it as a dependency. The
+parse result is handed straight to the next stage as typed data. An LSP server in that path would mean
+serialising an AST over a wire protocol to a process in the same address space.
 
-That said, the same core is meant to support a second target later: wrap
-it with [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) as a
-standalone binary that speaks real LSP over stdio, for VS Code, Neovim, or
-any other LSP-capable editor. One grammar engine, two thin adapters — see
-`docs/GRAMMAR.md` §9.2 for the architecture decision this follows
-(common core + per-dialect overlays, applied at the crate-consumption
-level too).
+A [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) wrapper remains worth building for
+editors that cannot link a Rust library, and the crate is structured so that it is a thin
+adapter rather than a rewrite — one grammar engine, two adapters. See `docs/GRAMMAR.md` §9.2 for
+the architecture decision this follows (common core plus per-dialect overlays, applied at the
+crate-consumption level too).
+
+An earlier version of this section named a Tauri + React desktop application as the primary
+target. That application no longer exists; the text outlived it.
 
 ## Development
 
