@@ -57,18 +57,6 @@ repos:
         pass_filenames: false
 
   # -------------------------------------------------------------------------
-  # TS / JS / JSON — biome (local hook so the pinned version in package.json wins).
-  # -------------------------------------------------------------------------
-  - repo: local
-    hooks:
-      - id: biome-check
-        name: biome check
-        entry: pnpm exec biome check --write --no-errors-on-unmatched
-        language: system
-        types_or: [ts, tsx, javascript, jsx, json]
-        pass_filenames: true
-
-  # -------------------------------------------------------------------------
   # Rust — cargo fmt, only relevant if/once a server package is written in Rust.
   # -------------------------------------------------------------------------
   - repo: local
@@ -85,7 +73,7 @@ repos:
   # Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
   # Examples:  feat(server): add .subckt symbol resolution
   #            fix(extension): correct hover range for behavioral sources
-  #            chore: bump biome to 2.0
+  #            chore: move the epic log under docs/
   # -------------------------------------------------------------------------
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.6.0

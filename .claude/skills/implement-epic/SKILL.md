@@ -1,6 +1,6 @@
 ---
 name: implement-epic
-description: Implement the code for one epic from progress.core.yaml (or another progress.*.yaml), following its acceptance criteria, then mark it review-ready. Counterpart to /test-and-progress.
+description: Implement the code for one epic from docs/progress.core.yaml (or another progress.*.yaml), following its acceptance criteria, then mark it review-ready. Counterpart to /test-and-progress.
 ---
 
 # `/implement-epic` — Implement an epic
@@ -104,12 +104,10 @@ cargo fmt --all
   data (`match`/const tables/a `DialectOverlay` trait impl per dialect), not
   scattered conditionals.
 
-### TypeScript epics (`extension/`, once it exists)
+### Non-Rust epics
 
-```bash
-pnpm --filter <package> typecheck
-pnpm exec biome check --write extension/
-```
+There are none, and there is no toolchain for one: this repository holds a single Rust crate.
+An epic in another language brings its own gates in the same change.
 
 ### Both
 
@@ -133,11 +131,6 @@ commit.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-
-# once extension/ exists:
-pnpm exec biome check --write .
-pnpm --filter <package> typecheck
-pnpm --filter <package> test
 ```
 
 If any gate fails: fix the root cause in the implementation files, re-run
@@ -191,7 +184,7 @@ blocked: >
 ## Step 7 — Commit the progress file update
 
 ```bash
-git add progress.core.yaml   # or the relevant progress file
+git add docs/progress.core.yaml   # or the relevant progress file
 git commit -m "chore(progress): mark <EPIC-ID> review"
 ```
 
@@ -220,4 +213,4 @@ either mark it `complete` or return it to `blocked`.
 - `.claude/skills/commit/SKILL.md` — gate procedure
 - `.claude/skills/test-and-progress/SKILL.md` — tester counterpart
 - `docs/GRAMMAR.md`
-- `progress.core.yaml`
+- `docs/progress.core.yaml`

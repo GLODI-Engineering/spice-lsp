@@ -73,7 +73,7 @@
 //! For the full grammar reference this crate implements against —
 //! including exactly what's common between ngspice and Xyce, what
 //! diverges, and why — see `docs/GRAMMAR.md` in the repository root. For
-//! what's implemented vs. planned, see `progress.core.yaml`.
+//! what's implemented vs. planned, see `docs/progress.core.yaml`.
 //!
 //! # Quick start: parsing a single file
 //!

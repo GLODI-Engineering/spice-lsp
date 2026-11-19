@@ -1,6 +1,6 @@
 ---
 name: test-and-progress
-description: Run epic tests, map outcomes back to progress.core.yaml (or another progress.*.yaml), and update epic status plus review/blocked notes with concrete results.
+description: Run epic tests, map outcomes back to docs/progress.core.yaml (or another progress.*.yaml), and update epic status plus review/blocked notes with concrete results.
 ---
 
 # `/test-and-progress` — Run tests and update the progress file
@@ -96,7 +96,7 @@ acceptance criteria are satisfied, the epic may still be `review`.
 
 ### 4. Environment failures are real blockers
 
-Missing crate, toolchain mismatch, missing `pnpm` package, broken fixture —
+Missing crate, toolchain mismatch, broken fixture —
 record as `blocked` with the exact reason.
 
 ## How tests should be written
@@ -118,9 +118,6 @@ record as `blocked` with the exact reason.
 cargo test -p spice-core                     # smallest correct scope
 cargo test -p spice-core lexer::             # narrow to a module
 cargo test --workspace                       # broaden when needed
-
-# once extension/ exists:
-pnpm --filter <package> test
 ```
 
 Capture, per epic: pass count if green, fail count if red, ignored/skip
